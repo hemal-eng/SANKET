@@ -1,0 +1,27 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+firmware/.cache/
+firmware_infer/.pio/
+firmware_infer/.vscode/
+firmware_infer/.cache/
+
+# Python
+python/.venv/
+python/__pycache__/
+python/*.pyc
+
+# Collected gesture data (per-user, often large, keep local)
+python/data/
+
+# Build artifacts
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
