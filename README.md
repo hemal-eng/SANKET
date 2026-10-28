@@ -240,6 +240,18 @@ to add new Bangla words to SANKET.
 
 ---
 
+## 🛡️ Defensive Publication / Prior Art
+
+This project is published as a **defensive publication** to establish
+worldwide prior art. See [`zenodo/`](zenodo/) for the full technical
+disclosure (`SANKET_disclosure.pdf`) and step-by-step instructions to
+mint a permanent, citeable **DOI** via Zenodo (free).
+
+Once the DOI is minted, the badge will appear here:
+`[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)`
+
 ## 📜 License
 
-See [LICENSE](LICENSE).
+See [LICENSE](LICENSE). Code is MIT-licensed. The technical disclosure in
+[`zenodo/SANKET_disclosure.pdf`](zenodo/SANKET_disclosure.pdf) is licensed
+CC BY 4.0.
