@@ -1,4 +1,25 @@
+# SANKET — Python pipeline dependencies
+#
+# Install into a fresh venv at SANKET/python/.venv :
+#   cd SANKET/python
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -U pip
+#   pip install -r requirements.txt
+
+# ---- GUIs ----
 PySide6>=6.6
 pyqtgraph>=0.13.3
 pyserial>=3.5
 numpy>=1.26
+
+# ---- Training ----
+# TF 2.16+ dropped Intel-macOS wheels. 2.15.1 is the last version with
+# an x86_64 Mac wheel for Python 3.10/3.11. Pin for reproducibility.
+tensorflow==2.15.1
+scikit-learn>=1.3
+
+# ---- Zenodo defensive-publication PDF builder ----
+# Pure-Python PDF generator; no native dependencies.
+fpdf2>=2.7
+

@@ -88,6 +88,8 @@ SANKET/
 ├── hardware/                     ← hardware references
 │   ├── BOM.md                    bill of materials
 │   └── WIRING.md                 ESP32-S3 ↔ MPU6050 pinout
+├── references/                   ← vendored third-party libraries
+│   └── BanglaText-main/          Mamunul Mazid's Bangla OLED rendering lib (MIT) — for future OLED work
 ├── firmware/                     ← PlatformIO: data logger firmware
 │   ├── README.md
 │   ├── platformio.ini
