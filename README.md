@@ -6,6 +6,13 @@
   <em>Giving silent hands a way to be understood.</em>
 </p>
 
+<p align="center">
+  <a href="https://doi.org/10.5281/zenodo.23762217"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23762217.svg" alt="DOI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-ESP32--S3-informational" alt="Platform: ESP32-S3">
+  <img src="https://img.shields.io/badge/model-INT8%20TFLite-success" alt="Model: INT8 TFLite">
+</p>
+
 ---
 
 ## 👤 Author
@@ -243,12 +250,34 @@ to add new Bangla words to SANKET.
 ## 🛡️ Defensive Publication / Prior Art
 
 This project is published as a **defensive publication** to establish
-worldwide prior art. See [`zenodo/`](zenodo/) for the full technical
-disclosure (`SANKET_disclosure.pdf`) and step-by-step instructions to
-mint a permanent, citeable **DOI** via Zenodo (free).
+worldwide prior art. The full technical disclosure is permanently
+archived on Zenodo with a citeable DOI:
 
-Once the DOI is minted, the badge will appear here:
-`[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)`
+**DOI:** [10.5281/zenodo.23762217](https://doi.org/10.5281/zenodo.23762217)
+
+See [`zenodo/SANKET_disclosure.pdf`](zenodo/SANKET_disclosure.pdf) for the
+10-section technical disclosure, and [`zenodo/README.md`](zenodo/README.md)
+for details.
+
+### 📖 Suggested citation
+
+> Hemal, H. (2026). *SANKET: A Wrist-Worn ESP32-S3 TinyML System for Bangla
+> Deaf-Aid Air-Written Gesture Recognition* (v1.0.0) [Software].
+> Zenodo. https://doi.org/10.5281/zenodo.23762217
+
+BibTeX:
+```bibtex
+@software{hemal_sanket_2026,
+  author       = {Hemal, Hassan},
+  title        = {{SANKET: A Wrist-Worn ESP32-S3 TinyML System for
+                   Bangla Deaf-Aid Air-Written Gesture Recognition}},
+  version      = {1.0.0},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.23762217},
+  url          = {https://doi.org/10.5281/zenodo.23762217}
+}
+```
 
 ## 📜 License
 

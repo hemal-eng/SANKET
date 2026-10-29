@@ -370,9 +370,9 @@ worldwide as of the publication date (2026-10-29).
 
 > Hemal, H. (2026). *SANKET: A Wrist-Worn ESP32-S3 TinyML System for
 > Bangla Deaf-Aid Air-Written Gesture Recognition* (Version 1.0.0)
-> [Technical disclosure]. Zenodo. https://doi.org/10.5281/zenodo.XXXXXXX
+> [Software]. Zenodo. https://doi.org/10.5281/zenodo.23762217
 
-(Replace `XXXXXXX` with the DOI assigned by Zenodo upon upload.)
+**DOI:** [10.5281/zenodo.23762217](https://doi.org/10.5281/zenodo.23762217)
 
 ---
 
