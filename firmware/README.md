@@ -1,54 +1,59 @@
-# `firmware/` — SANKET Data Logger
+# `firmware/` — SANKET Data Logger (v6)
 
-PlatformIO + Arduino firmware for the ESP32-S3-DevKitC-1 used **during
-data collection**. Streams IMU over USB serial and captures one-shot
-6-second gesture recordings on demand.
+PlatformIO + Arduino firmware for the ESP32-S3-DevKitC-1, used **during data
+collection** and with the host test GUI. It streams the MPU6050 over USB
+serial and records one-shot gesture captures on demand.
 
 ## When to flash this
 
-Only during data collection. For deployment (recognizing gestures on-chip)
-flash [`firmware_infer/`](../firmware_infer/) instead.
+- Collecting data with `python/collector.py`
+- Testing a model on the laptop with `python/infer_gui.py`
+
+For the standalone device (on-chip recognition + OLED + voice), flash
+[`firmware_infer/`](../firmware_infer/) instead.
 
 ## What it does
 
-- Boots → prints handshake `H,SANKET-logger,v5,100hz,oneshot,600`
-- Runs a 200-sample MPU6050 auto-calibration (keep wrist still ~2 s)
-- Streams `L,<ax>,<ay>,<az>,<gx>,<gy>,<gz>` at 100 Hz continuously
-- Listens for `T\n` over serial (sent by the Python collector when you press SPACE):
-  - Starts a **one-shot** recording of exactly 600 samples (6.0 s @ 100 Hz)
-  - Prints `R,START` → 600× `D,...` → `R,STOP,600`
-  - Any `T\n` received during a recording is ignored
-- Also accepts a BOOT-button press as a fallback trigger
+- Boots → prints `H,SANKET-logger,v6,100hz,oneshot,100-2000`
+- Waits 1.5 s, then averages **200 samples (2 s)** for the bias calibration
+  (keep the board still, flat and face-up)
+- Applies an IIR low-pass filter (**α = 0.30**) to all 6 channels
+- Streams `L,ax,ay,az,gx,gy,gz` at **100 Hz** whenever it is not recording
+- On `T<N>` records **exactly N samples** (one-shot), then stops by itself.
+  The collector sends `T600` (6.0 s).
+- Any trigger during a recording is ignored, so a recording can never be cut short
+- **BOOT button** (GPIO 0) is a fallback trigger: debounced 40 ms, ignored for
+  the first 1 s after boot, records the default 600 samples
 
-Also runs a software IIR low-pass filter (α=0.3) over the 6 raw IMU
-channels before transmission, so what the GUI sees matches what the
-model will see at inference time.
+## Sensor configuration
 
-## Pin assignments
-
-| Pin | Function |
+| Setting | Value |
 |---|---|
-| GPIO 8 | I²C SDA (MPU6050) |
-| GPIO 9 | I²C SCL (MPU6050) |
-| GPIO 0 | BOOT button (built-in, optional trigger) |
+| I²C | GPIO 8 SDA, GPIO 9 SCL, 400 kHz, address 0x68 |
+| Sample rate | 100 Hz (`SMPLRT_DIV = 9`) |
+| Digital low-pass filter | 44 Hz (`CONFIG = 0x03`) |
+| Accelerometer range | ±4 g (8192 LSB/g) |
+| Gyroscope range | ±500 °/s (65.5 LSB/°/s) |
+| Software IIR | α = 0.30 |
 
-## Serial protocol
+## Serial protocol (921600 baud)
 
 ### Device → Host
 ```
-H,SANKET-logger,v5,100hz,oneshot,600          handshake
-C,START                                        calibration started
-C,DONE,ox,oy,oz,ogx,ogy,ogz                   calibration done (offsets)
-L,ax,ay,az,gx,gy,gz                           live stream @100 Hz
-R,START                                        recording started
-D,ax,ay,az,gx,gy,gz                           recording sample (600 total)
-R,STOP,<sample_count>                         recording ended (count = 600)
-E,<reason>                                    error
+H,SANKET-logger,v6,100hz,oneshot,100-2000   handshake
+C,START                                      calibration started
+C,DONE,ox,oy,oz,ogx,ogy,ogz                  offsets (g, °/s)
+L,ax,ay,az,gx,gy,gz                          live stream @100 Hz
+R,START,<N>                                  recording started (N samples)
+D,ax,ay,az,gx,gy,gz                          recording sample
+R,STOP,<count>                               recording ended
+E,<reason>                                   error
 ```
 
 ### Host → Device
 ```
-T\n          trigger a one-shot recording (ignored if already recording)
+T\n        record the default 600 samples
+T<N>\n     record N samples (clamped to 100 … 2000)
 ```
 
 ## Build + flash
@@ -56,25 +61,24 @@ T\n          trigger a one-shot recording (ignored if already recording)
 ```bash
 cd firmware
 pio run -t upload
+pio device monitor -b 921600
 ```
 
-Then launch the collector GUI (see [`../python/README.md`](../python/README.md)).
+## Configuration (`src/main.cpp`)
 
-## Configuration
-
-Edit `src/main.cpp` constants to tune:
-
-| Constant | Current | Meaning |
+| Constant | Value | Meaning |
 |---|---|---|
-| `SAMPLE_RATE_HZ` | 100 | IMU sampling rate |
-| `FIXED_RECORD_SAMPLES` | 600 | Length of each one-shot recording |
-| `FILTER_ALPHA` | 0.30 | IIR low-pass smoothing (0..1, smaller = heavier smoothing) |
-| `CALIB_SAMPLES` | 200 | Boot-time calibration average length (2 s @ 100 Hz) |
+| `SAMPLES_DEFAULT` | 600 | recording length when no N is given |
+| `SAMPLES_MIN` / `SAMPLES_MAX` | 100 / 2000 | clamp for `T<N>` |
+| `FILTER_ALPHA` | 0.30 | IIR smoothing (smaller = smoother) |
+| `CALIB_SAMPLES` | 200 | calibration length (2 s) |
+| `CALIB_WARMUP_MS` | 1500 | wait before calibrating |
+| `BTN_DEBOUNCE_MS` | 40 | BOOT button debounce |
 
-If you change `FIXED_RECORD_SAMPLES`, also update:
-- `python/collector.py` → `FIXED_RECORD_S`, `FIXED_RECORD_SMPL`
-- `python/train.py` → `WINDOW`
-- `python/infer_gui.py` → `WINDOW`
-- `firmware_infer/src/model_norm.h` → `MODEL_WINDOW`
+The model window (600 samples) must agree across `collector.py`
+(`FIXED_DURATION_S = 6.0`), `train.py` (`WINDOW`), `infer_gui.py` (read from
+`norm.json`) and `firmware_infer/src/model_norm.h` (`MODEL_WINDOW`).
 
-They must all agree.
+> The logger and the on-device firmware use the **same** filter, ranges and
+> calibration, so the data the model was trained on matches what the device
+> sees live.

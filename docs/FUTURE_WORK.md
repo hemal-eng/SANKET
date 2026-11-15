@@ -1,78 +1,65 @@
-# SANKET — Future Work
+# SANKET — Roadmap & Future Work
 
-Planned extensions. Not implemented yet — this document is a roadmap.
+## ✅ Done
 
-## 1. Audio output (voice for the Deaf)
+| Feature | Where |
+|---|---|
+| Data-logger firmware + fixed 6 s collector GUI | `firmware/`, `python/collector.py` |
+| 8-class INT8 model (7 Bangla words + idle), 100 % validation | `python/train.py`, `python/models/` |
+| On-device inference on the ESP32-S3 (TFLM + esp-nn, ~40 ms per inference) | `firmware_infer/` |
+| **Motion-triggered capture** — starts when the wrist moves (80 °/s), ends when it settles (0.4 s) or at 3.5 s | `firmware_infer/src/main.cpp` |
+| **Bangla OLED display** — SSD1306 128×64, BanglaText renderer, word rotated to match the panel mounting | `firmware_infer/src/main.cpp` |
+| **Voice output** — DFPlayer Mini speaks the detected word from the SD card | `firmware_infer/src/audio.cpp` |
+| No re-trigger while the word is being spoken | `firmware_infer/src/main.cpp` |
+| Host test GUI with automatic motion-bracketed capture | `python/infer_gui.py` |
+| Voice-file preparation tool | `python/prepare_audio.py` |
 
-The headline next step. A **DFPlayer Mini + small speaker** will be added
-so that when the device detects a word, it plays a pre-recorded Bangla
-audio clip of that word — turning the Deaf user's silent gestures into
-audible speech for hearing people around them.
+## 🔜 Next
 
-Rough plan:
-- UART1 (TX = GPIO 17, RX = GPIO 18) to the DFPlayer Mini.
-- MicroSD on the DFPlayer carries `0001.mp3` through `000N.mp3`,
-  one per class, recorded in Bangla.
-- Firmware: when `DETECTED,<word>,<conf>` fires, send a UART play
-  command for the matching file index.
+### 1. Orientation-independent calibration
+At boot the firmware subtracts the accelerometer reading of the boot pose.
+If the device boots upside-down, every reading is offset by almost 2 g and
+confidence collapses. **Plan:** calibrate only the gyro bias at boot and use a
+fixed accelerometer offset measured flat (≈ 0, 0, +0.97 g), matching the
+training data. No retraining needed.
 
-## 2. On-wrist OLED
+### 2. Boot experience
+- Splash animation **সংকেত**
+- Self-test checklist on the OLED: `IMU ✓  MODEL ✓  VOICE ✓`
+- Calibration screen **স্থির রাখুন** with a progress bar
+- Welcome greeting **আস-সালামু আলাইকুম** from the speaker
+- 🔇 icon when the DFPlayer is missing (display-only mode)
 
-Add an SSD1306 128×64 OLED (I²C) on the same bus as the MPU6050 so the
-device also **displays** the detected Bangla word (useful when the
-environment is too loud for the speaker, or the hearer is also Deaf).
+### 3. Sticky result screen
+Keep the detected word on the OLED until the next word starts, or for 15 s,
+instead of returning to the ready screen after the cooldown. Show
+`● ready` in the header once the device re-arms.
 
-Bangla font rendering is handled by Mamunul Mazid's **BanglaText**
-library (pre-generated font headers already downloaded in parent
-project).
+### 4. UI task + event queue
+Move all OLED drawing and DFPlayer commands into one low-priority FreeRTOS
+`uiTask` fed by a queue, so the 100 Hz sampling loop never waits on I²C or
+UART. Split `main.cpp` into `imu`, `inference`, `ui_oled`, `audio` and
+`config.h`.
 
-## 3. Larger vocabulary
+### 5. Bluetooth presentation app
+A large live view for a projector during demos.
+- The ESP32-S3 supports **Bluetooth Low Energy only** (no Classic/SPP).
+- Firmware: NimBLE-Arduino service `SANKET` sends a small notification per
+  state change and result (word, confidence, probabilities), plus energy at
+  ~5 Hz for a motion bar.
+- Mac: Python app with `bleak` (BLE) + PySide6 (full-screen view).
+- BLE needs ~50 KB of internal RAM. Move the tensor arena to the 8 MB PSRAM
+  to make room.
 
-Expand from 2 classes to **10+ essential survival words**:
+### 6. Wearable hardware
+- LiPo battery + charger (TP4056) + boost to 5 V for the DFPlayer
+- Battery percentage on the OLED
+- 3D-printed wrist enclosure with a speaker grille
+- Custom PCB combining ESP32-S3, MPU6050, OLED connector and DFPlayer
 
-> আমি, তুমি, হ্যাঁ, না, ধন্যবাদ, পানি, খাবার, সাহায্য, ডাক্তার, ভালো
-
-See [`GESTURE_DESIGN_GUIDE.md`](GESTURE_DESIGN_GUIDE.md) for the recipe.
-Model stays well under 50 KB even at 20 classes.
-
-## 4. Battery + enclosure (wearable form factor)
-
-- 18650 Li-ion cell (3.7 V, 2500 mAh)
-- TP4056 charging module
-- MP1584 or similar buck converter down to 3.3 V
-- 3D-printed wrist strap enclosure
-
-Target: 24 h continuous runtime on a charge (ESP32-S3 light-sleep between
-inferences could push this to a week).
-
-## 5. Multi-user adaptation
-
-Current dataset is one user's handwriting style. For a product:
-
-- Collect data from 10+ Deaf volunteers per word.
-- Add per-user calibration (user writes 2–3 reps on first boot; model is
-  fine-tuned on-chip).
-- Explore federated learning so users' data never leaves their device.
-
-## 6. BLE / Wi-Fi companion app
-
-- Pair SANKET to a phone via BLE.
-- Phone app shows the live transcript, speaks words aloud via its own
-  TTS, logs conversations.
-- Pure-local option: no cloud, no privacy exposure.
-
-## 7. Alternative input modalities
-
-- **EMG sensor** (muscle signals) in addition to IMU — differentiates
-  intent-to-write from random motion more cleanly.
-- **Flex sensors** for finger shapes — enables full BdSL (Bangla Sign
-  Language), not just air-writing.
-
-## 8. Research directions
-
-- Compare quantized 1D-CNN vs TinyTransformer vs 1D-TCN on the same
-  Bangla air-writing task.
-- Dataset release: publish an open Bangla air-writing dataset for
-  reproducibility.
-- Benchmark INT8 inference latency across ESP32-C3 / S3 / P4 using
-  esp-nn vs. generic kernels.
+### 7. More words, more users
+- Grow toward 10–15 distinct words (see
+  [`GESTURE_DESIGN_GUIDE.md`](GESTURE_DESIGN_GUIDE.md))
+- Collect data from several Deaf users so the model generalises beyond one writer
+- Optional replay of the last word with a wrist flick or button
+- Volume control button (low / mid / high)

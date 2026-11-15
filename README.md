@@ -11,6 +11,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/platform-ESP32--S3-informational" alt="Platform: ESP32-S3">
   <img src="https://img.shields.io/badge/model-INT8%20TFLite-success" alt="Model: INT8 TFLite">
+  <img src="https://img.shields.io/badge/language-Bangla-orange" alt="Language: Bangla">
 </p>
 
 ---
@@ -29,223 +30,208 @@
 
 ## 🎯 What is SANKET?
 
-**SANKET** (সংকেত — Bangla for *signal / gesture*) is a wrist-worn embedded AI
-system that lets a Deaf person **air-write a Bangla word with their wrist**
-and have the device **recognize it on-chip** in real time — using nothing more
-than:
+**SANKET** (সংকেত — Bangla for *signal / gesture*) is a wrist-worn device
+that lets a Deaf or speech-impaired person **write a Bangla word in the
+air with the wrist** and have it **shown on a screen and spoken aloud** —
+recognised entirely on a microcontroller, with no phone, no cloud and no
+internet.
 
-- 1× **ESP32-S3** microcontroller
-- 1× **MPU6050** 6-axis IMU
-
-That's the entire BOM. Under **~$6** total. No phone, no cloud, no internet,
-no camera, no glove. Just a wrist and a tiny chip running a 17 KB
-quantized neural network.
+```
+   wrist writes "পানি" in the air
+             │
+             ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │ MPU6050 ─► ESP32-S3 ─► INT8 neural network (≈40 ms on-chip)   │
+   │                 │                                            │
+   │                 ├─► OLED shows   পানি   (DETECTED 92%)        │
+   │                 └─► speaker says "পানি"                       │
+   └──────────────────────────────────────────────────────────────┘
+```
 
 ### Why it matters
 
-Over **3 million Bangladeshis are Deaf or hard-of-hearing**. Existing
-sign-language solutions are built around English/ASL, require phone apps,
-or need expensive cameras and gloves. SANKET is the first edge-ML system
-in the Bangla language, costs almost nothing to build, and is designed to
-be **worn like a watch** so it fits into daily life without stigma.
+Millions of people in Bangladesh are Deaf or hard of hearing. Existing
+sign-language tools are built around English/ASL, need a phone, a camera
+or a sensor glove, and often an internet connection. SANKET works in
+**Bangla**, is built from low-cost hobby parts, runs **fully offline**,
+and is meant to be **worn like a watch**.
 
-### How it works (high level)
+### Recognised words
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│  Deaf user wears SANKET on the wrist                           │
-│         │                                                       │
-│         ▼  air-writes a Bangla word (e.g. "আমি")               │
-│  MPU6050 IMU streams 6-axis motion @100 Hz                     │
-│         │                                                       │
-│         ▼                                                       │
-│  ESP32-S3  (dual-core)                                          │
-│   ├─ Core 1: samples at 100 Hz into a 6 s ring buffer          │
-│   ├─ Core 0: runs INT8 1D-CNN via esp-tflite-micro + esp-nn    │
-│   │          (ESP32-S3 vector-ISA accelerated)                 │
-│   └─ Serial output every 300 ms:                               │
-│         P,ami,0.996   ← prediction + confidence                │
-│         DETECTED,ami,0.996   ← fires on sustained detection    │
-└───────────────────────────────────────────────────────────────┘
-```
+| | Word | Meaning | Spoken as |
+|---|---|---|---|
+| 1 | আমি | I / me | আমি |
+| 2 | হ্যাঁ | yes | হ্যাঁ |
+| 3 | ধন্যবাদ | thank you | ধন্যবাদ |
+| 4 | পানি | water | পানি |
+| 5 | খাবার | food | খাবার |
+| 6 | সাহায্য | help | সাহায্য |
+| 7 | সালাম | greeting | আস-সালামু আলাইকুম |
+| — | *idle* | everyday movement — ignored | — |
 
 ---
 
-## 📂 Repository Layout
+## ✨ Features
+
+- **Air-written Bangla word recognition** with a 6-axis IMU on the wrist
+- **On-device INT8 1D-CNN** (149 KB) with TensorFlow-Lite-Micro + esp-nn, ~40 ms per inference
+- **Motion-triggered capture** — no button: the device starts recording when the wrist moves and stops when it settles
+- **Bangla text on a 0.96″ OLED** with correct conjuncts (BanglaText renderer)
+- **Natural voice output** through a DFPlayer Mini, recorded in a real human voice
+- **Dual-core design** — sampling never pauses for inference or the display
+- **Safe behaviour** — low-confidence results stay silent; no re-trigger while speaking
+- Complete toolchain: data collector GUI, training pipeline, host test GUI, audio preparation
+
+---
+
+## 🧰 Hardware
+
+| Component | Role |
+|---|---|
+| ESP32-S3-DevKitC-1 (N16R8) | Brain: sensing, recognition, display, audio |
+| MPU6050 (GY-521) | 6-axis motion sensor |
+| SSD1306 0.96″ 128×64 I²C OLED | Shows the Bangla word |
+| DFPlayer Mini + microSD card | Plays the recorded word |
+| 3 W 4–8 Ω speaker | Voice output |
+| 1 kΩ resistor, 100–470 µF capacitor, wires | Signal and power hygiene |
+| **Total** | **≈ ৳1,670 / ≈ $16** |
+
+**Pin map**
+
+| Device | ESP32-S3 pins |
+|---|---|
+| MPU6050 | SDA **GPIO 8**, SCL **GPIO 9** (I²C bus 0) |
+| OLED | SDA **GPIO 41**, SCL **GPIO 42** (I²C bus 1) |
+| DFPlayer | TX **GPIO 17** → 1 kΩ → RX, RX **GPIO 18** ← TX, BUSY **GPIO 16** |
+
+Full parts list with prices → [`hardware/BOM.md`](hardware/BOM.md) ·
+wiring diagram and power notes → [`hardware/WIRING.md`](hardware/WIRING.md)
+
+---
+
+## 📂 Repository layout
 
 ```
 SANKET/
 ├── README.md                     ← you are here
-├── LICENSE
-├── docs/                         ← in-depth guides
-│   ├── ARCHITECTURE.md           overall system design + diagrams
-│   ├── SETUP.md                  one-time setup for Mac/Linux/Windows
-│   ├── DATA_COLLECTION_GUIDE.md  how to collect clean gesture samples
-│   ├── TRAINING.md               ML pipeline + system requirements
-│   ├── DEPLOYMENT.md             how to flash + run on ESP32-S3
-│   ├── GESTURE_DESIGN_GUIDE.md   how to add new words to the model
-│   └── FUTURE_WORK.md            planned extensions
-├── hardware/                     ← hardware references
+├── LICENSE                       MIT
+├── docs/
+│   ├── ARCHITECTURE.md           system design, state machine, resources, protocol
+│   ├── DEVELOPMENT_LOG.md        how the project was built, decisions, lessons
+│   ├── SETUP.md                  installing the tools
+│   ├── DATA_COLLECTION_GUIDE.md  recording gesture samples
+│   ├── TRAINING.md               model, augmentation, results, export
+│   ├── DEPLOYMENT.md             flashing the wearable, serial log reference
+│   ├── AUDIO_AND_DISPLAY.md      Bangla OLED rendering, voice files, SD card
+│   ├── GESTURE_DESIGN_GUIDE.md   choosing and adding new words
+│   ├── TROUBLESHOOTING.md        every problem met so far, with fixes
+│   └── FUTURE_WORK.md            roadmap
+├── hardware/
 │   ├── BOM.md                    bill of materials
-│   └── WIRING.md                 ESP32-S3 ↔ MPU6050 pinout
-├── references/                   ← vendored third-party libraries
-│   └── BanglaText-main/          Mamunul Mazid's Bangla OLED rendering lib (MIT) — for future OLED work
-├── firmware/                     ← PlatformIO: data logger firmware
-│   ├── README.md
-│   ├── platformio.ini
-│   └── src/main.cpp
-├── firmware_infer/               ← PlatformIO: on-device TFLM inference
-│   ├── README.md
-│   ├── platformio.ini
+│   └── WIRING.md                 complete wiring + power
+├── firmware/                     PlatformIO — data-logger firmware (dataset recording)
+├── firmware_infer/               PlatformIO — the wearable firmware
 │   └── src/
-│       ├── main.cpp              IMU + ring buffer + dual-core TFLM
-│       ├── model_data.h          INT8 TFLite model as C array (17 KB)
-│       └── model_norm.h          per-channel mean/std from training
-└── python/                       ← ML pipeline + GUIs
-    ├── README.md
-    ├── requirements.txt
-    ├── collector.py              PySide6 data-collection GUI
-    ├── train.py                  1D-CNN + INT8 TFLite export
-    ├── infer_gui.py              host-side inference GUI (debug tool)
-    └── models/                   trained artifacts (small, versioned)
-        ├── sanket.keras
-        ├── sanket_float32.tflite
-        ├── sanket_int8.tflite
-        ├── model_data.h          same INT8 model as C array
-        ├── labels.json           class id → name mapping
-        └── norm.json             per-channel mean/std
+│       ├── main.cpp              sensing, motion trigger, inference, OLED
+│       ├── audio.h / audio.cpp   DFPlayer module
+│       ├── model_data.h          INT8 model (C array)
+│       ├── model_norm.h          normalisation + class names
+│       ├── BanglaMNRegular_25pt.h  Bangla font
+│       └── test/                 stand-alone test sketches
+├── python/
+│   ├── collector.py              data-collection GUI
+│   ├── train.py                  training + INT8 export
+│   ├── infer_gui.py              host-side test GUI
+│   ├── prepare_audio.py          voice recordings → DFPlayer MP3s
+│   ├── requirements.txt
+│   └── models/                   trained model artifacts
+├── The_Audios/SD_CARD/mp3/       ready-to-copy voice files 0001–0007.mp3
+├── references/BanglaText-main/   vendored Bangla text library (MIT)
+└── zenodo/                       defensive-publication package
 ```
 
 ---
 
-## 🧰 Hardware Required
-
-Minimum, this is the **entire shopping list**:
-
-| Component                                | Qty | Approx cost |
-|------------------------------------------|-----|-------------|
-| ESP32-S3-DevKitC-1 (N16R8, dual-USB)     | 1   | ~$5         |
-| MPU6050 breakout (clone OK)              | 1   | ~$1         |
-| 4× female-female jumper wires            | 4   | <$1         |
-| Micro-USB or USB-C cable                 | 1   | you own one |
-| **Total**                                |     | **~$6–7**   |
-
-Full details and wiring diagram → [`hardware/BOM.md`](hardware/BOM.md),
-[`hardware/WIRING.md`](hardware/WIRING.md).
-
----
-
-## 💻 Software Required
-
-Minimum system to **train** the model yourself:
-
-| Requirement | Minimum | Recommended |
-|---|---|---|
-| OS | macOS 11+, Ubuntu 20.04+, Windows 10+ | macOS 13+ / Ubuntu 22.04+ |
-| CPU | any 64-bit x86_64 or ARM64 | 4+ cores |
-| RAM | 4 GB | 8+ GB |
-| Disk | 2 GB free (TensorFlow + venv) | 5 GB |
-| Python | 3.10 or 3.11 | 3.11 |
-| GPU | *not required* | not required (model is tiny) |
-| Internet | one-time (pip + PlatformIO) | one-time |
-
-Minimum system to **run** the pre-trained model: **just the ESP32-S3 itself**
-(no laptop needed after flashing).
-
-Full dependency list → [`python/requirements.txt`](python/requirements.txt)
-and [`docs/SETUP.md`](docs/SETUP.md).
-
----
-
-## 🚀 Quick Start — 5 steps from zero to detecting
-
-> Full version in [`docs/SETUP.md`](docs/SETUP.md).
+## 🚀 Quick start
 
 ```bash
-# 1. Clone
+# 1. Get the code
 git clone https://github.com/hemal-eng/SANKET.git
 cd SANKET
 
-# 2. Install Python deps (TensorFlow, PySide6, pyqtgraph, pyserial)
+# 2. Python tools (data collection, training, testing, audio)
 cd python
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cd ..
 
-# 3. Install PlatformIO
-brew install platformio      # or: pip install -U platformio
+# 3. Firmware toolchain: PlatformIO (pioarduino core) — see docs/SETUP.md
 
-# 4. Wire your hardware:
-#    ESP32-S3 GPIO 8 → MPU6050 SDA
-#    ESP32-S3 GPIO 9 → MPU6050 SCL
-#    ESP32-S3 3V3   → MPU6050 VCC
-#    ESP32-S3 GND   → MPU6050 GND
-#    (see hardware/WIRING.md)
+# 4. Prepare the SD card: copy The_Audios/SD_CARD/mp3/ to the card root
+#    (FAT32, MBR) — see docs/AUDIO_AND_DISPLAY.md
 
-# 5a. OPTION A — run the included pre-trained model (ami + idle):
+# 5. Wire the hardware — see hardware/WIRING.md
+
+# 6. Flash the wearable firmware (pre-trained 8-class model included)
 cd firmware_infer
 pio run -t upload
-pio device monitor --baud 921600
-#    Air-write আমি in the air with your wrist → see DETECTED,ami,0.9x
-
-# 5b. OPTION B — train your own words from scratch:
-#    See docs/DATA_COLLECTION_GUIDE.md and docs/TRAINING.md
+pio device monitor -b 115200
 ```
 
----
+> ⚠️ **Power on with the device flat, face-up and still.** The sensor
+> calibrates at boot; a tilted boot shifts the readings and the words will
+> not be recognised.
 
-## 📋 What's Working Today
-
-- ✅ Hardware: ESP32-S3 + MPU6050 wired on I²C @ GPIO 8/9
-- ✅ Firmware (`firmware/`): one-shot 6-second gesture capture triggered from the GUI
-- ✅ GUI (`python/collector.py`): PySide6-based data collector with Position × Style selectors
-- ✅ Training (`python/train.py`): 1D-CNN with 24–30× augmentation, exports FP32 and INT8 TFLite + C array header
-- ✅ Host-side inference (`python/infer_gui.py`): sliding-window probability bars + detection banner
-- ✅ On-device inference (`firmware_infer/`): dual-core TFLM — Core 1 samples @ 100 Hz, Core 0 runs INT8 inference every 300 ms
-- ✅ Trained smoke-test model: `ami` (আমি) + `idle` classes, 100 % validation accuracy on 28 held-out samples
-
-> See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full system diagram and
-> design rationale.
-
----
-
-## 🧪 Reproducing the Results
-
-With the included pre-trained model (`python/models/sanket_int8.tflite`):
-
-1. Wire the hardware (above).
-2. Flash the inference firmware: `cd firmware_infer && pio run -t upload`.
-3. Open serial monitor at **921600 baud**.
-4. **Keep wrist still for ~3 seconds** → log should show `P,idle,0.9x+`.
-5. **Air-write আমি** (full connected word, like a signature) → log should flip to `P,ami,0.9x+` and print `DETECTED,ami,0.9x+`.
-6. Return to stillness → log returns to `P,idle,...`.
+Then write a word in the air, pause, and watch:
+```
+STATE,CAPTURING,energy=91.3
+STATE,FINISH,n=182,elapsed=1.82s,reason=settled
+INFER,top=pani,conf=0.918,infer_ms=42,probs=[...]
+DETECTED,pani,0.918
+AUDIO,play=4,pani
+```
+The OLED shows **পানি** and the speaker says it.
 
 ---
 
-## 📚 Guides
+## 📊 Results
 
-| Guide | What's in it |
+| Metric | Value |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | End-to-end system design, dual-core rationale, data flow |
-| [`docs/SETUP.md`](docs/SETUP.md) | OS-by-OS install (macOS / Linux / Windows), toolchain, troubleshooting |
-| [`docs/DATA_COLLECTION_GUIDE.md`](docs/DATA_COLLECTION_GUIDE.md) | How to collect clean gesture samples (positions, styles, counts) |
-| [`docs/TRAINING.md`](docs/TRAINING.md) | ML pipeline, augmentation strategy, system requirements |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Flashing both firmwares, serial monitor, troubleshooting |
-| [`docs/GESTURE_DESIGN_GUIDE.md`](docs/GESTURE_DESIGN_GUIDE.md) | How to add NEW Bangla words to the model |
-| [`docs/FUTURE_WORK.md`](docs/FUTURE_WORK.md) | Planned extensions (audio output, OLED, more words, …) |
-| [`hardware/BOM.md`](hardware/BOM.md) | Bill of materials |
-| [`hardware/WIRING.md`](hardware/WIRING.md) | Pinout + diagram |
-| [`firmware/README.md`](firmware/README.md) | Data-logger firmware details |
-| [`firmware_infer/README.md`](firmware_infer/README.md) | On-device inference firmware details |
-| [`python/README.md`](python/README.md) | Python pipeline details |
+| Dataset | 778 samples (7 words + idle), fixed 6 s each, 3 positions × 3 writing styles |
+| Validation accuracy | **100 %** on 117 held-out samples |
+| Live on-device test | 6/6 words detected at 72–92 % confidence; accidental movements → idle |
+| Model size | 149 KB (INT8) |
+| Inference time | ~40 ms on ESP32-S3 |
+| RAM / flash use | 73.9 % / 13.3 % |
 
 ---
 
-## 🤝 Contributing / Extending
+## 📚 Documentation
 
-See [`docs/GESTURE_DESIGN_GUIDE.md`](docs/GESTURE_DESIGN_GUIDE.md) for the recipe
-to add new Bangla words to SANKET.
+| Guide | Contents |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, signal pipeline, state machine, dual-core layout, resources, serial protocol |
+| [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md) | Step-by-step history: what was built, what failed, why decisions were made |
+| [`docs/SETUP.md`](docs/SETUP.md) | Installing Python, PlatformIO and drivers |
+| [`docs/DATA_COLLECTION_GUIDE.md`](docs/DATA_COLLECTION_GUIDE.md) | Recording clean gesture samples |
+| [`docs/TRAINING.md`](docs/TRAINING.md) | Model, augmentation, training results, exporting to the firmware |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Building, flashing, reading the serial log |
+| [`docs/AUDIO_AND_DISPLAY.md`](docs/AUDIO_AND_DISPLAY.md) | Bangla OLED rendering, recording and preparing voice files, SD card |
+| [`docs/GESTURE_DESIGN_GUIDE.md`](docs/GESTURE_DESIGN_GUIDE.md) | Choosing good words and adding new ones |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Symptoms, causes and fixes |
+| [`docs/FUTURE_WORK.md`](docs/FUTURE_WORK.md) | Roadmap |
+| [`hardware/BOM.md`](hardware/BOM.md) · [`hardware/WIRING.md`](hardware/WIRING.md) | Parts and wiring |
+| [`firmware/README.md`](firmware/README.md) · [`firmware_infer/README.md`](firmware_infer/README.md) · [`python/README.md`](python/README.md) | Component details |
+
+---
+
+## 🙏 Acknowledgements
+
+- [BanglaText](https://github.com/mamunul/BanglaText) by Mamunul Mazid (MIT) — Bangla text rendering on embedded displays
+- [esp-tflite-micro](https://github.com/espressif/esp-tflite-micro) and esp-nn by Espressif — on-chip inference
+- Adafruit SSD1306 / GFX and DFRobot DFPlayer Mini libraries
 
 ---
 
@@ -258,8 +244,7 @@ archived on Zenodo with a citeable DOI:
 **DOI:** [10.5281/zenodo.23762217](https://doi.org/10.5281/zenodo.23762217)
 
 See [`zenodo/SANKET_disclosure.pdf`](zenodo/SANKET_disclosure.pdf) for the
-10-section technical disclosure, and [`zenodo/README.md`](zenodo/README.md)
-for details.
+technical disclosure, and [`zenodo/README.md`](zenodo/README.md) for details.
 
 ### 📖 Suggested citation
 
@@ -267,7 +252,6 @@ for details.
 > Deaf-Aid Air-Written Gesture Recognition* (v1.0.0) [Software].
 > Zenodo. https://doi.org/10.5281/zenodo.23762217
 
-BibTeX:
 ```bibtex
 @software{hemal_sanket_2026,
   author       = {Hemal, Hassan},
@@ -285,4 +269,5 @@ BibTeX:
 
 See [LICENSE](LICENSE). Code is MIT-licensed. The technical disclosure in
 [`zenodo/SANKET_disclosure.pdf`](zenodo/SANKET_disclosure.pdf) is licensed
-CC BY 4.0.
+CC BY 4.0. Voice recordings in `The_Audios/` are the author's own voice and
+are provided for use with this project.

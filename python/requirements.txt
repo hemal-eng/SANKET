@@ -19,6 +19,11 @@ numpy>=1.26
 tensorflow==2.15.1
 scikit-learn>=1.3
 
+# ---- Audio preparation (prepare_audio.py) ----
+# MP3 encoder for the DFPlayer voice files. Decoding uses macOS `afconvert`
+# (built in) or `ffmpeg` on other systems.
+lameenc>=1.7
+
 # ---- Zenodo defensive-publication PDF builder ----
 # Pure-Python PDF generator; no native dependencies.
 fpdf2>=2.7

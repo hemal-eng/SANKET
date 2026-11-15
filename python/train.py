@@ -43,26 +43,39 @@ DATA_DIR      = HERE / "data"
 OUT_DIR       = HERE / "models"
 OUT_DIR.mkdir(exist_ok=True)
 
-WINDOW        = 600          # samples (6 s @ 100 Hz) — must match firmware
 CHANNELS      = 6            # ax,ay,az,gx,gy,gz
-LABELS        = [            # order sets integer class ids
-    {"id": 0, "name": "idle", "bangla": "(idle)"},
-    {"id": 1, "name": "ami",  "bangla": "আমি"},
+# WINDOW is now AUTO-DISCOVERED from the dataset (longest .npz across every
+# class). Variable-duration collection means each word can have a different
+# natural length; we train on a single padded window = max observed length,
+# rounded up to the nearest 50 samples for cleaner shapes.
+WINDOW        = None         # filled in by load_dataset() at runtime
+
+LABELS        = [            # order sets integer class ids — classes present in data/
+    {"id": 0, "name": "idle",      "bangla": "(idle / rest)"},
+    {"id": 1, "name": "ami",       "bangla": "আমি"},
+    {"id": 2, "name": "haan",      "bangla": "হ্যাঁ"},
+    {"id": 3, "name": "dhonnobad", "bangla": "ধন্যবাদ"},
+    {"id": 4, "name": "pani",      "bangla": "পানি"},
+    {"id": 5, "name": "khabar",    "bangla": "খাবার"},
+    {"id": 6, "name": "shahajjo",  "bangla": "সাহায্য"},
+    {"id": 7, "name": "salam",     "bangla": "সালাম"},
 ]
 NAME_TO_ID    = {L["name"]: L["id"] for L in LABELS}
 
-AUG_PER_SAMPLE = 30          # synthetic copies per real training sample
-VAL_FRAC       = 0.20
+AUG_PER_SAMPLE = 24          # synthetic copies per real target sample (random-position + idle-fill)
+VAL_FRAC       = 0.15
 EPOCHS         = 80
-BATCH          = 32
+BATCH          = 64
 SEED           = 1337
+LABEL_SMOOTHING= 0.05        # soft targets — helps when two classes share features
 
 
 # ---------- Data loading ----------
-def load_dataset() -> tuple[np.ndarray, np.ndarray, list[str]]:
-    xs, ys, srcs = [], [], []
+def load_dataset():
+    """Scan data/<label>/*.npz, load each sample as-is, zero-pad to the
+    longest sample. No mixing, no random position. Raw samples straight in."""
+    all_entries = []
     for L in LABELS:
-        # Match BOTH legacy (pos*_rep*.npz) and new (pos*_style*_rep*.npz) files
         files = sorted(set(
             glob.glob(str(DATA_DIR / L["name"] / "pos*_rep*.npz")) +
             glob.glob(str(DATA_DIR / L["name"] / "pos*_style*_rep*.npz"))
@@ -72,20 +85,31 @@ def load_dataset() -> tuple[np.ndarray, np.ndarray, list[str]]:
             continue
         for fp in files:
             z = np.load(fp)
-            x = z["data"].astype(np.float32)   # (N, 6)
-            if x.shape[0] < WINDOW:
-                x = np.pad(x, ((0, WINDOW - x.shape[0]), (0, 0)))
-            else:
-                x = x[:WINDOW]
-            xs.append(x)
-            ys.append(L["id"])
-            srcs.append(fp)
-    if not xs:
-        print("❌  No data found. Record samples first with collector.py.")
-        sys.exit(1)
-    X = np.stack(xs, axis=0)         # (N, 300, 6)
+            x = z["data"].astype(np.float32)
+            all_entries.append((x, L["id"], fp))
+
+    if not all_entries:
+        print("❌  No data found."); sys.exit(1)
+
+    lengths = [e[0].shape[0] for e in all_entries]
+    raw_max = max(lengths)
+    window = ((raw_max + 49) // 50) * 50
+    print(f"\n📏 Natural sample lengths: min={min(lengths)}  "
+          f"median={int(np.median(lengths))}  max={raw_max}")
+    print(f"   → WINDOW set to {window} samples ({window/100:.1f} s @ 100 Hz)")
+
+    xs, ys, srcs = [], [], []
+    for x, cid, fp in all_entries:
+        if x.shape[0] < window:
+            pad = np.zeros((window - x.shape[0], 6), dtype=np.float32)
+            x = np.concatenate([x, pad], axis=0)
+        elif x.shape[0] > window:
+            x = x[:window]
+        xs.append(x); ys.append(cid); srcs.append(fp)
+    X = np.stack(xs, axis=0)
     y = np.asarray(ys, dtype=np.int64)
-    return X, y, srcs
+    globals()["WINDOW"] = window
+    return X, y, srcs, window
 
 
 # ---------- Normalization ----------
@@ -106,38 +130,28 @@ def apply_norm(X: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndarray:
 rng = np.random.default_rng(SEED)
 
 def augment(x: np.ndarray) -> np.ndarray:
-    """Augment a (WINDOW, 6) float32 window IN PHYSICAL UNITS (pre-normalization).
-
-    Air-writing is slower and more variable than table-tap, so this is more
-    aggressive — bigger time warps (handwriting-speed variation), bigger shift
-    (gesture may start anywhere in the 6s window), small "pause insertion"
-    (holds samples constant for a stretch) to simulate thinking mid-stroke.
-    """
+    """Standard augmentation: noise, scale, time warp, small shift."""
     x = x.copy()
-    # 1) random time shift (bigger — gesture may start anywhere in 6s)
-    shift = int(rng.integers(-80, 81))
+    # time shift
+    shift = int(rng.integers(-60, 61))
     if shift != 0:
         x = np.roll(x, shift, axis=0)
         if shift > 0:
-            x[:shift] = x[shift:shift + 1] if shift < len(x) else 0.0
+            x[:shift] = 0.0
         else:
-            x[shift:] = x[shift - 1:shift] if -shift < len(x) else 0.0
-    # 2) per-channel gaussian noise
-    noise_scale_acc  = rng.uniform(0.005, 0.03)
-    noise_scale_gyro = rng.uniform(0.5,   2.5)
+            x[shift:] = 0.0
+    # noise
     noise = np.concatenate([
-        rng.normal(0, noise_scale_acc,  (x.shape[0], 3)),
-        rng.normal(0, noise_scale_gyro, (x.shape[0], 3)),
+        rng.normal(0, rng.uniform(0.005, 0.03), (x.shape[0], 3)),
+        rng.normal(0, rng.uniform(0.5,  2.5),   (x.shape[0], 3)),
     ], axis=1).astype(np.float32)
     x = x + noise
-    # 3) amplitude scale
-    acc_scale  = rng.uniform(0.90, 1.10)
-    gyro_scale = rng.uniform(0.90, 1.10)
-    x[:, :3] *= acc_scale
-    x[:, 3:] *= gyro_scale
-    # 4) BIGGER time warp (handwriting-speed variability: ±25%)
-    warp = rng.uniform(0.75, 1.25)
-    new_len = max(1, int(round(x.shape[0] * warp)))
+    # scale
+    x[:, :3] *= rng.uniform(0.90, 1.10)
+    x[:, 3:] *= rng.uniform(0.90, 1.10)
+    # time warp
+    warp = rng.uniform(0.80, 1.20)
+    new_len = max(2, int(round(x.shape[0] * warp)))
     if new_len != x.shape[0]:
         idx = np.linspace(0, x.shape[0] - 1, new_len)
         x = np.stack([np.interp(idx, np.arange(x.shape[0]), x[:, c])
@@ -148,12 +162,6 @@ def augment(x: np.ndarray) -> np.ndarray:
         else:
             pad = WINDOW - x.shape[0]
             x = np.pad(x, ((0, pad), (0, 0)))
-    # 5) with 25% chance insert a "thinking pause" (hold samples constant)
-    if rng.random() < 0.25:
-        pause_len   = int(rng.integers(10, 80))              # 100 ms – 800 ms
-        pause_start = int(rng.integers(0, max(1, WINDOW - pause_len)))
-        hold_vec    = x[pause_start].copy()
-        x[pause_start:pause_start + pause_len] = hold_vec
     return x
 
 
@@ -168,22 +176,36 @@ def expand_with_aug(X: np.ndarray, y: np.ndarray, k: int):
 
 # ---------- Model ----------
 def build_model() -> tf.keras.Model:
+    """Bigger 1D-CNN — ~2× channel width + extra conv stage at full temporal
+    resolution. Adds capacity to tell apart confusable classes whose IMU
+    signatures share endpoints. Still ESP32-S3 friendly after int8."""
     inp = layers.Input(shape=(WINDOW, CHANNELS), name="imu")
-    x = layers.Conv1D(16, 7, strides=2, padding="same", use_bias=False)(inp)
+    x = layers.Conv1D(32, 7, strides=2, padding="same", use_bias=False)(inp)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    x = layers.Conv1D(32, 5, strides=2, padding="same", use_bias=False)(x)
+    x = layers.Conv1D(64, 5, strides=2, padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
-    x = layers.Conv1D(48, 3, strides=2, padding="same", use_bias=False)(x)
+    x = layers.Conv1D(96, 3, strides=2, padding="same", use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ReLU()(x)
+    x = layers.Conv1D(128, 3, strides=2, padding="same", use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ReLU()(x)
+    x = layers.Conv1D(160, 3, strides=1, padding="same", use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
     x = layers.GlobalAveragePooling1D()(x)
-    x = layers.Dropout(0.3)(x)
+    x = layers.Dropout(0.4)(x)
     out = layers.Dense(len(LABELS), activation="softmax", name="probs")(x)
-    m = models.Model(inp, out, name="banglasign")
+    m = models.Model(inp, out, name="sanket")
+    # one-hot + categorical CE with label smoothing (sparse CE has no smoothing).
+    def smoothed_loss(y_true, y_pred):
+        y_oh = tf.one_hot(tf.cast(tf.squeeze(y_true), tf.int32), depth=len(LABELS))
+        return tf.keras.losses.categorical_crossentropy(
+            y_oh, y_pred, label_smoothing=LABEL_SMOOTHING)
     m.compile(optimizer=tf.keras.optimizers.Adam(1e-3),
-              loss="sparse_categorical_crossentropy",
+              loss=smoothed_loss,
               metrics=["accuracy"])
     return m
 
@@ -227,11 +249,11 @@ def main():
     np.random.seed(SEED)
 
     print(f"📂 Loading data from {DATA_DIR}")
-    X_raw, y, srcs = load_dataset()
+    X_raw, y, srcs, _window = load_dataset()
     print(f"   Loaded {X_raw.shape[0]} samples; per-class counts:")
     for L in LABELS:
         n = int((y == L["id"]).sum())
-        print(f"     • {L['name']:8s} (id={L['id']}) : {n}")
+        print(f"     • {L['name']:10s} (id={L['id']}) : {n}")
 
     print(f"\n🎲 Stratified split, val_frac={VAL_FRAC}")
     trn_idx, val_idx = stratified_split(X_raw, y, VAL_FRAC)

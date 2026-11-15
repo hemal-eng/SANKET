@@ -2,11 +2,41 @@
   {
     "id": 0,
     "name": "idle",
-    "bangla": "(idle)"
+    "bangla": "(idle / rest)"
   },
   {
     "id": 1,
     "name": "ami",
     "bangla": "আমি"
+  },
+  {
+    "id": 2,
+    "name": "haan",
+    "bangla": "হ্যাঁ"
+  },
+  {
+    "id": 3,
+    "name": "dhonnobad",
+    "bangla": "ধন্যবাদ"
+  },
+  {
+    "id": 4,
+    "name": "pani",
+    "bangla": "পানি"
+  },
+  {
+    "id": 5,
+    "name": "khabar",
+    "bangla": "খাবার"
+  },
+  {
+    "id": 6,
+    "name": "shahajjo",
+    "bangla": "সাহায্য"
+  },
+  {
+    "id": 7,
+    "name": "salam",
+    "bangla": "সালাম"
   }
 ]

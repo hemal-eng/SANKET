@@ -14,6 +14,12 @@ python/*.pyc
 # Collected gesture data (per-user, often large, keep local)
 python/data/
 
+# Raw phone voice recordings stay local; only the prepared
+# SD-card MP3s in The_Audios/SD_CARD/mp3/ are versioned.
+The_Audios/*.aac
+The_Audios/*.m4a
+The_Audios/*.wav
+
 # Build artifacts
 *.o
 *.elf

@@ -1,156 +1,191 @@
 # SANKET — Data Collection Guide
 
-How to collect clean gesture samples for training.
+How to collect clean, uniform gesture samples for training.
 
 ## 1. Prerequisites
 
-- Hardware wired per [`../hardware/WIRING.md`](../hardware/WIRING.md).
+- MPU6050 wired per [`../hardware/WIRING.md`](../hardware/WIRING.md)
+  (GPIO 8 = SDA, GPIO 9 = SCL).
 - Python environment set up per [`SETUP.md`](SETUP.md).
-- Data-logger firmware flashed:
+- **Data-logger firmware** (`firmware/`, v6) flashed:
   ```bash
   cd firmware
   pio run -t upload
   ```
+  The logger streams at **921600 baud** and accepts the one-shot command
+  `T<N>` (record exactly N samples). Details:
+  [`../firmware/README.md`](../firmware/README.md).
 
 ## 2. Launch the collector GUI
 
 ```bash
 cd python
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
-python collector.py
+.venv/bin/python collector.py
 ```
 
-A window opens with:
+To stop it, close the window (or `pkill -f collector.py` from a terminal).
 
-1. **Port** dropdown → pick the ESP32-S3 serial device
-2. **Label** dropdown → the Bangla word being recorded (hard-coded list)
-3. **Position** radio → P1 / P2 / P3 (arm position)
-4. **Style** radio → S1 (normal) / S2 (slow-careful) / S3 (quick-sloppy)
-5. **Counter row** → shows how many samples per (label, position, style) you already have
-6. **Big green button + SPACE shortcut** → fires one 6-second one-shot recording
-7. **Live plots** → accel (g) and gyro (°/s)
-8. **Preview panel** → appears after a recording with duration + peak metrics
-9. **Save (S) / Redo (R)** → keyboard shortcuts for the preview
+The window shows:
 
-## 3. The recording protocol — THE EXACT SEQUENCE
+1. **Port** dropdown — ESP32 USB-UART bridges (CH34x / CP210x) are listed
+   first; Bluetooth ports are pushed to the bottom
+2. **Label** — the word being recorded (fixed English names, no Bangla typing needed)
+3. **Position** — P1 / P2 / P3 (arm position)
+4. **Style** — S1 normal / S2 slow-careful / S3 quick-sloppy
+5. **Duration** — `🔒 6 s (locked — uniform dataset)`
+6. **Session panel** (scrollable) — counter grid of samples per
+   label × position × style
+7. **Big record button + SPACE** — fires one 6-second recording
+8. **Live plots** — accelerometer (g) and gyroscope (°/s)
+9. **Preview** — after each recording; **S** = save, **R** = redo
 
-For **every single sample** you record, follow this:
+The window is resizable and the session panel scrolls, so it fits small
+laptop screens.
+
+## 3. Why every sample is exactly 6.0 s
+
+Every sample is **600 samples @ 100 Hz = 6.000 s**. The duration is locked
+in `collector.py` (`FIXED_DURATION_S = 6.0`), and the GUI sends `T600` to the
+logger.
+
+Earlier versions let each word use its own duration (2–20 s). That produced
+samples of different lengths, which then had to be zero-padded to the longest
+one. The padding did not match what the device sees live, and accuracy on the
+short words dropped. The first smoke test (`ami` vs `idle`) used fixed 6-second
+samples and reached 100 %, so the whole dataset was re-collected at a fixed
+6 s. A uniform dataset needs no tricks at training time.
+
+## 4. The recording protocol — exact sequence
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │  BEFORE EACH SAMPLE                                            │
-│  1. Set Label (e.g. "ami")                                     │
+│  1. Set Label (e.g. "pani")                                    │
 │  2. Set Position (P1 / P2 / P3)                                │
 │  3. Set Style   (S1 / S2 / S3)                                 │
 │  4. Click the GUI window so SPACE goes to it                   │
 │  5. Hold your wrist still, ready to start                      │
 │                                                                 │
 │  RECORDING                                                      │
-│  6. Press SPACE          ← status flips to red "● RECORDING…"  │
-│  7. Air-write the word   ← full connected sweep, ~3–4 seconds  │
-│  8. Hold still            ← device keeps sampling to 6 s mark   │
+│  6. Press SPACE          ← status turns red "● RECORDING…"     │
+│  7. Air-write the word   ← full connected sweep, like a        │
+│                            signature, usually 1–4 s            │
+│  8. Hold still            ← until the 6 s mark                  │
 │  9. Device auto-stops    ← preview appears                     │
 │                                                                 │
 │  AFTER                                                          │
-│ 10. Look at the plot      ← does it look like other samples?    │
-│ 11. Press S to save, or R to redo if it was messy              │
-│ 12. Change Position or Style for the NEXT batch of 5           │
+│ 10. Check the plot        ← does it look like the others?      │
+│ 11. S = save, R = redo                                         │
+│ 12. Change Position or Style for the next batch                │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-### How the firmware actually works
-- Press SPACE → GUI sends `T\n` over serial.
-- Firmware ignores anything until the one-shot completes (so a stray tap can't
-  stop it mid-gesture).
-- Firmware captures **exactly 600 samples @ 100 Hz = 6.000 s**, then stops.
-- GUI receives samples, builds the preview, offers Save / Redo.
+**Idle samples:** move your hand naturally for the **full 6 seconds** —
+scratching your head, picking up a cup, resting, waving — anything that is
+**not** one of the words. Idle is the model's "reject" class.
 
-### Why 6 seconds?
-A deliberate air-written word takes 2–4 seconds. The 6-second window gives:
-- Breathing room if you pause mid-gesture to think,
-- Flexibility for slow vs fast writers,
-- Still-time at the end that the model learns to ignore.
-
-## 4. The sampling plan (per Bangla word)
-
-The dataset structure that produced our 100 % smoke-test result:
+## 5. The sampling plan
 
 ```
-Per word:  3 Positions × 3 Styles × 5 reps = 45 samples
+Per word:  3 Positions × 3 Styles × 5+ reps  =  45+ samples
 ```
 
 | Position | Where your wrist is |
 |---|---|
-| **P1** | Natural / neutral — in front of body at waist height |
-| **P2** | Raised — shoulder/head height (gesturing at someone) |
-| **P3** | Low / resting — hand near hip or on table edge |
+| **P1** | Neutral — in front of the body at waist height |
+| **P2** | Raised — shoulder/head height |
+| **P3** | Low / resting — near the hip or on a table edge |
 
 | Style | How you write the word |
 |---|---|
 | **S1 — normal** | Natural pace, how you'd write it in real life |
-| **S2 — slow-careful** | Deliberate, exaggerated, pauses between letters allowed |
-| **S3 — quick-sloppy** | Fast, messy, abbreviated — like you're in a hurry |
+| **S2 — slow-careful** | Deliberate, exaggerated |
+| **S3 — quick-sloppy** | Fast, messy, in a hurry |
 
-> **Keep the shape consistent inside each style.** All 5 reps of S1 should
-> look alike; all 5 of S2 should look alike (just slower); etc.
+> Keep the shape consistent inside each style. All S1 reps should look
+> alike; S2 is the same shape, just slower.
 
-### Idle class
+Collect extra samples for any word that gets confused at test time. That is
+how the current dataset grew past 45 per word.
 
-Record **~30–50 idle samples** per user. Random hand movements, resting the
-wrist, picking up a cup, scratching your head — anything that's NOT the
-target word. Spread across P1/P2/P3. These are the "reject" class.
+## 6. Current dataset
 
-> Idle doesn't need a style — all idle samples go under `data/idle/`.
+All samples are 6.0 s. Total **778** samples:
 
-## 5. File naming and storage
+| Class | Bangla | Samples |
+|---|---|---:|
+| idle | (rest / random) | 129 |
+| ami | আমি | 90 |
+| haan | হ্যাঁ | 79 |
+| dhonnobad | ধন্যবাদ | 72 |
+| pani | পানি | 114 |
+| khabar | খাবার | 108 |
+| shahajjo | সাহায্য | 84 |
+| salam | সালাম (আস-সালামু আলাইকুম) | 102 |
+| **Total** | | **778** |
 
-Samples are saved as:
+Count your own data at any time:
+
+```bash
+cd python
+for d in data/*/; do echo "$(basename $d) $(ls $d*.npz 2>/dev/null | wc -l)"; done
+```
+
+Removed or retired classes (tumi, na, and the old variable-duration
+recordings) are kept in `data/_archive_variable_duration/`, which the trainer
+ignores. Nothing was deleted.
+
+## 7. File naming and storage
+
 ```
 python/data/<label>/pos<P>_style<S>_rep<NNN>.npz
 ```
 
 Example:
 ```
-python/data/ami/pos1_style1_rep001.npz
-python/data/ami/pos1_style1_rep002.npz
-...
-python/data/idle/pos1_rep001.npz
+python/data/pani/pos1_style1_rep001.npz
+python/data/pani/pos1_style2_rep004.npz
+python/data/idle/pos2_style1_rep012.npz
 ```
 
-Each `.npz` carries:
+Each `.npz` contains:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `data` | float32 (600, 6) | ax, ay, az in g; gx, gy, gz in °/s |
-| `label` | str | English name, e.g. "ami" |
-| `label_bangla` | str | Bangla text, e.g. "আমি (air-written)" |
+| `data` | float32 (600, 6) | ax, ay, az in g; gx, gy, gz in °/s (IIR-filtered) |
+| `label` | str | English name, e.g. `pani` |
+| `label_bangla` | str | Bangla text |
 | `position` | int | 1 / 2 / 3 |
 | `style` | int | 1 / 2 / 3 |
 | `sample_rate_hz` | int | 100 |
-| `duration_s` | float | should be ~6.00 |
+| `duration_s` | float | 6.00 |
 | `peak_a`, `peak_g` | float | signal strength |
-| `quality` | str | GUI auto-tag |
+| `quality` | str | GUI tag |
 | `timestamp_iso` | str | UTC ISO-8601 timestamp |
 
-> **Keep `python/data/` out of git** — it's user-personal and large.
-> `.gitignore` already excludes it.
+> `python/data/` is personal and large — `.gitignore` keeps it out of git.
 
-## 6. Tips for clean data
+## 8. Deleting a bad sample
+
+If you saved a sample by mistake, delete the newest file in that word's folder:
+
+```bash
+cd python/data/pani
+ls -t *.npz | head -1                 # shows the newest file
+rm "$(ls -t *.npz | head -1)"         # deletes it
+```
+
+Restart the collector afterwards so its counters refresh.
+
+## 9. Tips for clean data
 
 | Do | Don't |
 |---|---|
-| Wear the dev board on the **same spot** on your wrist for every sample | Rotate the board between samples (changes the IMU axes relative to the gesture) |
-| Keep the USB cable loose so it doesn't tug your arm | Let the cable yank the board mid-gesture |
-| Pause between samples (deep breath, reset posture) | Rush — fatigue bleeds consistency |
-| Collect in sets of 5 (one style × one position) | Mix styles randomly — you'll forget which was which |
-| Redo any sample that felt off (phone rang, elbow bumped) | Save messy samples hoping the model "will figure it out" |
-| Collect 20–30 % idle samples total | Only collect target words (model has no "no" class) |
+| Wear the board on the **same spot and orientation** every session | Rotate or flip the board between sessions |
+| Power on / calibrate with the board **flat, face-up** | Calibrate in a random pose — the offsets are subtracted from every reading |
+| Keep the USB cable loose | Let the cable tug the board mid-gesture |
+| Record in sets of 5 (one style × one position) | Mix styles randomly |
+| Redo anything that felt off | Save messy samples hoping the model copes |
+| Keep idle about the size of the biggest word class | Skip idle — the model then has no "nothing" answer |
 
-## 7. What the model expects
-
-For good classification you want:
-- **Minimum ~15 samples per class** (we achieved 100 % val with 45 ami + 89 idle)
-- **Diverse Positions and Styles** inside each class
-- **An "idle" / rest class** that's at least as big as the smallest target class
-
-See [`TRAINING.md`](TRAINING.md) for what happens next.
+See [`TRAINING.md`](TRAINING.md) for the next step.

@@ -1,32 +1,38 @@
-// SANKET — model normalization constants (auto-generated from norm.json).
+// SANKET — model normalization + labels (auto-regenerated).
 // Per-channel mean/std used during training; MUST be applied before feeding
 // data to the model.
 #pragma once
 
 constexpr int   MODEL_WINDOW   = 600;
 constexpr int   MODEL_CHANNELS = 6;
-constexpr int   MODEL_CLASSES  = 2;
+constexpr int   MODEL_CLASSES  = 8;
 
 // Order: ax, ay, az (g), gx, gy, gz (°/s)
 constexpr float MODEL_MU[6] = {
-    -0.027055740356445312f,
-     0.21883641183376312f,
-    -0.12755762040615082f,
-     5.55214786529541f,
-     1.0101189613342285f,
-     1.6056228876113892f
+    -0.2722071111f,
+    0.0085783144f,
+    -0.4693828523f,
+    0.6768615246f,
+    0.8164339066f,
+    2.1612236500f
 };
 constexpr float MODEL_SD[6] = {
-     0.354187548160553f,
-     0.4231823980808258f,
-     0.3928932845592499f,
-    49.249820709228516f,
-    30.566730499267578f,
-    44.00409698486328f
+    0.4862846136f,
+    0.4330985248f,
+    0.4913423657f,
+    66.1413192749f,
+    57.3431510925f,
+    57.2136650085f
 };
 
-// Class names (order matches softmax output index)
+// Class names (index == softmax output id)
 constexpr const char* MODEL_CLASS_NAMES[MODEL_CLASSES] = {
     "idle",
-    "ami"
+    "ami",
+    "haan",
+    "dhonnobad",
+    "pani",
+    "khabar",
+    "shahajjo",
+    "salam"
 };

@@ -49,7 +49,9 @@ static const uint32_t SAMPLE_RATE_HZ   = 100;
 static const uint32_t SAMPLE_PERIOD_US = 1000000UL / SAMPLE_RATE_HZ;
 static const uint32_t CALIB_SAMPLES    = 200;       // 2 s @ 100 Hz
 static const uint32_t CALIB_WARMUP_MS  = 1500;      // wait before calibrating
-static const uint32_t FIXED_RECORD_SAMPLES = 600;   // exactly 6.0 s @ 100 Hz — air-writing window
+static const uint32_t SAMPLES_DEFAULT  = 600;       // 6.0 s @ 100 Hz
+static const uint32_t SAMPLES_MIN      = 100;       // 1.0 s floor
+static const uint32_t SAMPLES_MAX      = 2000;      // 20.0 s ceiling (per host slider)
 static const uint32_t BTN_READY_MS     = 1000;      // ignore BOOT during this window after start
 static const uint32_t BTN_DEBOUNCE_MS  = 40;        // raw must be stable this long before logical flips
 
@@ -60,10 +62,15 @@ static constexpr float FILTER_ALPHA = 0.30f;
 float g_offset_raw[6] = {0, 0, 0, 0, 0, 0};  // raw (int16) offsets
 float g_filtered[6]   = {0, 0, 0, 0, 0, 0};  // filtered physical units
 
-bool     g_recording       = false;
-uint32_t g_record_count    = 0;
-uint32_t g_next_sample_us  = 0;
-uint32_t g_last_live_tx_us = 0;
+bool     g_recording        = false;
+uint32_t g_record_count     = 0;
+uint32_t g_target_samples   = SAMPLES_DEFAULT;   // updated per-trigger by host
+uint32_t g_next_sample_us   = 0;
+uint32_t g_last_live_tx_us  = 0;
+
+// Line-buffered serial command parser
+char     g_cmdbuf[16];
+uint8_t  g_cmdlen = 0;
 
 uint32_t g_boot_time_ms    = 0;
 bool     g_btn_raw_level   = HIGH;   // most recent raw read of PIN_BOOT
@@ -106,11 +113,30 @@ static bool readIMU(int16_t out[6]) {
 }
 
 // ---------- Trigger a one-shot recording (ignored if already recording) ----------
-static void triggerRecording() {
+// `samples` = requested number of IMU samples to capture; clamped to
+// [SAMPLES_MIN, SAMPLES_MAX]. 0 means "use default".
+static void triggerRecording(uint32_t samples) {
   if (g_recording) return;     // one-shot: ignore all triggers during a recording
-  g_recording    = true;
-  g_record_count = 0;
-  Serial.println("R,START");
+  if (samples == 0) samples = SAMPLES_DEFAULT;
+  if (samples < SAMPLES_MIN) samples = SAMPLES_MIN;
+  if (samples > SAMPLES_MAX) samples = SAMPLES_MAX;
+  g_target_samples = samples;
+  g_recording      = true;
+  g_record_count   = 0;
+  Serial.printf("R,START,%u\n", (unsigned)g_target_samples);
+}
+
+// Parse a line like "T", "T600", "T2000" and trigger accordingly.
+static void processCommand(const char* cmd) {
+  if (cmd[0] == 'T' || cmd[0] == 't') {
+    uint32_t samples = 0;
+    if (cmd[1] != '\0') {
+      long n = strtol(cmd + 1, nullptr, 10);
+      if (n > 0) samples = (uint32_t)n;
+    }
+    triggerRecording(samples);
+  }
+  // ignore unknown commands silently
 }
 
 // ---------- Setup ----------
@@ -180,7 +206,7 @@ void setup() {
 
   Serial.begin(921600);
   delay(600);  // allow Mac to settle USB
-  Serial.println("H,SANKET-logger,v5,100hz,oneshot,600");
+  Serial.println("H,SANKET-logger,v6,100hz,oneshot,100-2000");
 
   Wire.begin(PIN_SDA, PIN_SCL, 400000UL);  // 400 kHz I2C
 
@@ -242,20 +268,29 @@ void loop() {
     g_btn_pressed = (g_btn_raw_level == LOW);   // commit stable value (active-low)
   }
 
-  // Rising edge on debounced button → one-shot trigger
+  // Rising edge on debounced button → one-shot trigger with default duration
   bool press_edge = button_ready && g_btn_pressed && !g_btn_prev_pressed;
   g_btn_prev_pressed = g_btn_pressed;
-  if (press_edge) triggerRecording();
+  if (press_edge) triggerRecording(SAMPLES_DEFAULT);
 
-  // Serial command from host (preferred: GUI spacebar sends 'T')
+  // Serial command from host — line-buffered to parse "T<N>" cleanly.
   while (Serial.available() > 0) {
     char c = Serial.read();
-    if (c == 'T' || c == 't') triggerRecording();
-    // ignore CR/LF and any other junk
+    if (c == '\n' || c == '\r') {
+      if (g_cmdlen > 0) {
+        g_cmdbuf[g_cmdlen] = '\0';
+        processCommand(g_cmdbuf);
+        g_cmdlen = 0;
+      }
+    } else if (g_cmdlen < sizeof(g_cmdbuf) - 1) {
+      g_cmdbuf[g_cmdlen++] = c;
+    } else {
+      g_cmdlen = 0;  // overflow: discard
+    }
   }
 
-  // Fixed-length stop: the ONLY way a recording ends
-  if (g_recording && g_record_count >= FIXED_RECORD_SAMPLES) {
+  // Variable-length stop: the ONLY way a recording ends
+  if (g_recording && g_record_count >= g_target_samples) {
     g_recording = false;
     Serial.printf("R,STOP,%u\n", g_record_count);
   }

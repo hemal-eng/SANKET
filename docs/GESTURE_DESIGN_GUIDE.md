@@ -1,194 +1,141 @@
 # SANKET — Gesture Design Guide
 
-How to add **new Bangla words** to the model so SANKET can recognize them.
+Which Bangla words SANKET recognises, why these words were chosen, and how
+to add new ones.
 
-## 1. Why this guide exists
+## 1. The current word set (7 words + idle)
 
-The current model recognizes `ami` + `idle`. SANKET is extensible — you can
-add any Bangla word (or any air-gesture) by:
+| id | Word | Meaning | How it is made | Voice file |
+|---:|---|---|---|---|
+| 1 | **আমি** (ami) | I / me | air-written word, connected like a signature | `0001.mp3` |
+| 2 | **হ্যাঁ** (haan) | yes | air-written word | `0002.mp3` |
+| 3 | **ধন্যবাদ** (dhonnobad) | thank you | long air-written word | `0003.mp3` |
+| 4 | **পানি** (pani) | water | air-written word | `0004.mp3` |
+| 5 | **খাবার** (khabar) | food | gesture-style signature motion | `0005.mp3` |
+| 6 | **সাহায্য** (shahajjo) | help | gesture-style signature motion | `0006.mp3` |
+| 7 | **সালাম** (salam) | greeting — spoken as **আস-সালামু আলাইকুম** | gesture-style signature motion | `0007.mp3` |
+| 0 | idle | (nothing) | everyday hand movement / rest | silent |
 
-1. Designing a motion for it,
-2. Collecting ~45 samples,
-3. Retraining,
-4. Reflashing.
+The set focuses on daily survival needs (water, food, help), courtesy
+(thank you, greeting) and short answers (I, yes).
 
-This guide covers how to **design** a good gesture so the model can learn
-it well.
+## 2. How the set evolved — and why
 
-## 2. Gesture-design rules of thumb
+| Word | Decision | Reason |
+|---|---|---|
+| **তুমি (tumi)** | removed | Its ending strokes and আমি's opening strokes produce almost the same wrist motion, so the two were constantly confused. Removing tumi gave a clean diagonal confusion matrix. |
+| **না (na)** | removed | Very short and simple, so too little motion signal; it was unreliable live even after pruning its data. |
+| **ডাক্তার (daktar)** | dropped | Not collected; kept the set small and reliable. |
+| **ভালো (bhalo)** | replaced by **সালাম** | Its slot became the greeting, which is more useful in daily conversation. |
 
-### ✅ Make it short (2 – 4 seconds)
+Removed data is kept in `python/data/_archive_variable_duration/`.
 
-Fits inside the 6-second window with still-time at the end. Longer gestures
-compress badly; shorter gestures leave more rest-time that the model has to
-learn to ignore.
+## 3. What makes a word easy or hard to recognise
 
-### ✅ Make it one continuous sweep (connected, not letter-by-letter)
+The MPU6050 sees **wrist motion**, not letters. What matters is how distinct
+the motion is.
 
-Write the Bangla word like a cursive signature. One flowing motion.
-Pros:
-- More distinct from random hand movements
-- Easier to repeat consistently
-- Clear start and clear end
+| Type | Examples | Reliability | Why |
+|---|---|---|---|
+| **Gesture-style signatures** — long, distinctive motions | খাবার, সাহায্য, সালাম | highest | Big, unique motion energy that nothing else resembles |
+| **Long air-written words** | ধন্যবাদ | high | Many strokes give a long, unique signal |
+| **Short air-written words** | আমি, হ্যাঁ, পানি | good, needs care | Fewer strokes, so they need consistent writing and more samples |
+| **Very short words** | না | poor | Too little signal; easily mistaken for idle |
 
-Letter-by-letter writing produces lots of brief pauses that look similar
-across different words, making the model confuse them.
+Rules of thumb for a new word:
 
-### ✅ Make it visually distinct from existing gestures
+1. **Make it long enough** — at least ~1 second of deliberate motion.
+2. **Make it different** — if a stroke sequence resembles an existing word,
+   exaggerate or change it.
+3. **Write it the same way every time** inside a style.
 
-If two words have very similar motions, the model will confuse them.
-Before committing to a gesture, do it slowly in air a few times and ask
-yourself: *"Does this feel genuinely different from the words I already
-have?"*
+## 4. Recipe — adding a new word
 
-### ✅ Use the full wrist — rotation + translation
+Example: adding **ডাক্তার** (daktar, doctor) as class id **8**.
 
-The MPU6050 captures both acceleration (translation) and angular velocity
-(rotation). A gesture that uses both is much easier to recognize than a
-one-axis motion (e.g. "straight up-down" is harder than "a diagonal curve
-plus a twist").
+### Step 1 — collector label
 
-### ✅ Starts and ends from rest
+`python/collector.py` → `LABELS` (keep `idle` last):
 
-Begin with your wrist still. Make the gesture. Hold still at the end.
-Gives the model clear boundary cues.
-
-### ✅ Not easily triggered accidentally
-
-Think about ambient wrist movements: picking up a cup, scratching your
-head, waving hello. If your gesture resembles one of those, you'll get
-false positives.
-
-### ⚠️ Avoid these pitfalls
-
-| Pitfall | Why bad |
-|---|---|
-| Very short gestures (<1 s) | Hard to distinguish from random bumps |
-| Very long gestures (>5 s) | Gets cut by the 6 s window |
-| Symmetric motions ("left-right-left-right") | Hard for the model to find a direction |
-| Pure linear slides | Low gyro signal — IMU underused |
-| Gestures that look like your target population's common movements | False positives in daily use |
-
-## 3. Recommended first set of 10 Bangla words
-
-A survival-oriented word set for Deaf-aid use:
-
-| # | Bangla | Roman | Meaning | Suggested motion |
-|---|---|---|---|---|
-| 1 | **আমি** | ami | I | ✅ already trained |
-| 2 | **তুমি** | tumi | you | signature-style sweep of তুমি |
-| 3 | **হ্যাঁ** | haan | yes | nodding-like up-down + small twist |
-| 4 | **না** | na | no | horizontal zigzag (shaking "no") |
-| 5 | **ধন্যবাদ** | dhonnobad | thank you | large curve from heart outward |
-| 6 | **পানি** | pani | water | drinking motion — tip wrist forward |
-| 7 | **খাবার** | khabar | food | spoon-to-mouth motion |
-| 8 | **সাহায্য** | shahajjo | help | wave-up (asking) |
-| 9 | **ডাক্তার** | daktar | doctor | air-writing ড-কার |
-| 10 | **ভালো** | bhalo | good / OK | thumbs-up motion + outward |
-
-Idle (random / rest) is always the 11th class.
-
-> Feel free to pick different motions. The ones above are starting points —
-> what matters is consistency inside each class.
-
-## 4. Workflow: adding word #N to the trained model
-
-### Step 1 — register the label in Python
-
-Edit `python/collector.py`:
 ```python
-LABELS = [
-    {"id": 0, "name": "ami",  "bangla": "আমি (air-written)", "target": True},
-    {"id": 1, "name": "idle", "bangla": "(random / rest)",   "target": False},
-    # add here:
-    {"id": 2, "name": "tumi", "bangla": "তুমি (air-written)", "target": True},
-]
+{"id": 7, "name": "daktar", "bangla": "ডাক্তার (doctor)", "target": True,
+ "default_duration_s": 6.0, "hint": "air-write ডাক্তার then hold still until 6 s"},
+{"id": 8, "name": "idle",   "bangla": "(random / rest)",  "target": False,
+ "default_duration_s": 6.0, "hint": "random hand movements for the full 6 s"},
 ```
 
-Edit `python/train.py` the same way:
+### Step 2 — collect samples
+
+Flash the logger (`firmware/`), run the collector, and record
+**3 positions × 3 styles × 5+ reps** (45+ samples). See
+[`DATA_COLLECTION_GUIDE.md`](DATA_COLLECTION_GUIDE.md).
+
+### Step 3 — training label
+
+`python/train.py` → `LABELS` (append; the id becomes the class number):
+
 ```python
-LABELS = [
-    {"id": 0, "name": "idle", "bangla": "(idle)"},
-    {"id": 1, "name": "ami",  "bangla": "আমি"},
-    {"id": 2, "name": "tumi", "bangla": "তুমি"},
-]
+{"id": 8, "name": "daktar", "bangla": "ডাক্তার"},
 ```
 
-> The two files use slightly different label orders — that's fine. Each
-> normalizes to its own `id` space.
+### Step 4 — host GUI colour
 
-### Step 2 — collect 45 samples
+`python/infer_gui.py` → `CLASS_COLORS`:
 
-Open the collector, set Label = "tumi", and go through:
-
-```
-Position P1 × Styles S1,S2,S3 × 5 reps each = 15 samples
-Position P2 × Styles S1,S2,S3 × 5 reps each = 15 samples
-Position P3 × Styles S1,S2,S3 × 5 reps each = 15 samples
-                                      Total = 45 samples
+```python
+"daktar": "#7e57c2",
 ```
 
-See [`DATA_COLLECTION_GUIDE.md`](DATA_COLLECTION_GUIDE.md) for the full
-protocol.
-
-### Step 3 — retrain
+### Step 5 — train and check
 
 ```bash
 cd python
-source .venv/bin/activate
-python train.py
+.venv/bin/python train.py
 ```
 
-`train.py` auto-discovers every class folder under `data/`. You don't
-need to tell it there's a new one.
+Look at the confusion matrix. If the new word is confused with an existing
+one, go back to Section 3.
 
-### Step 4 — update the firmware's class list
+### Step 6 — firmware
 
-Open `firmware_infer/src/model_norm.h` and update:
-```cpp
-constexpr int   MODEL_CLASSES = 3;        // was 2
-constexpr const char* MODEL_CLASS_NAMES[MODEL_CLASSES] = {
-    "idle",
-    "ami",
-    "tumi",     // NEW
-};
-```
+1. Copy the model and regenerate `model_norm.h` (exact commands in
+   [`TRAINING.md`](TRAINING.md) § 10).
+2. `firmware_infer/src/main.cpp` → add the Bangla text to `CLASS_BANGLA[]`
+   **in the same order** as `MODEL_CLASS_NAMES`:
+   ```cpp
+   "ডাক্তার",      // daktar
+   ```
 
-> The order must match `python/models/labels.json` after training.
+### Step 7 — voice file
 
-### Step 5 — update `MODEL_MU` / `MODEL_SD` if changed
-
-Open `python/models/norm.json`, copy the `mu` and `sd` arrays into
-`firmware_infer/src/model_norm.h`.
-
-### Step 6 — copy the new C header + reflash
+Record the word on a phone, save it as `Daktar.aac` in `The_Audios/`, and add
+`"Daktar"` to `ORDER` in `python/prepare_audio.py`. Then:
 
 ```bash
-cp python/models/model_data.h  firmware_infer/src/model_data.h
+cd python
+.venv/bin/python prepare_audio.py
+```
+
+That creates `0008.mp3`. Copy the `mp3/` folder to the SD card again.
+
+### Step 8 — flash and test
+
+```bash
 cd firmware_infer
-pio run -t upload
+pio run -t upload -t monitor
 ```
 
-### Step 7 — verify
+Air-write ডাক্তার → expect `DETECTED,daktar,0.8x`, the word on the OLED, and
+the voice from the speaker.
 
-```bash
-pio device monitor --baud 921600
-```
+## 5. How many words can SANKET hold?
 
-Air-write তুমি → should see `P,tumi,0.9x` and `DETECTED,tumi,0.9x`.
-
-## 5. Scaling tips
-
-| Vocabulary size | What to watch |
+| Classes | Difficulty |
 |---|---|
-| 2 classes (current) | Trivial — any model trains perfectly |
-| 5 classes | Still easy; 15–20 samples/class is plenty |
-| 10 classes | Need the full P × S × 5 protocol per word; collect in sessions, not one marathon |
-| 20+ classes | Model capacity becomes relevant. Consider growing Conv1D filters: 16 → 24, 32 → 48, 48 → 64 |
-| 50+ classes | Model stays well under 100 KB. Flash is nowhere near full on the ESP32-S3 (6 MB free). |
+| 2 (first smoke test) | trivial |
+| 8 (current) | reliable with ~70–130 samples per class |
+| 10–15 | feasible; choose very distinct motions, 60+ samples per class |
+| 20+ | needs data from several users and possibly a larger model |
 
-## 6. If a new word is being confused with an existing one
-
-1. **Collect more varied samples** for both — different Positions and Styles.
-2. **Redesign the motion** so it's more different (if ami is a sweeping arc, don't make tumi also a sweeping arc).
-3. **Check for leakage** — look at your `.npz` files in a plot; if two classes' plots look similar, the gestures are too similar.
+The INT8 model is ~149 KB and the ESP32-S3 has 16 MB of flash, so storage is
+never the limit. The limit is how distinct the wrist motions are.

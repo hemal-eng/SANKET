@@ -1,154 +1,184 @@
 # SANKET — Deployment Guide
 
-How to flash SANKET onto an ESP32-S3-DevKitC-1 and watch it recognize
-gestures over serial.
+How to build and flash SANKET onto an ESP32-S3-DevKitC-1, and how to read
+what it prints while it recognises air-written Bangla words, shows them on
+the OLED and speaks them through the DFPlayer.
 
-## 1. Two firmwares, one dev board
+## 1. Two firmwares, one board
 
-| Firmware folder | What it does | When to flash |
-|---|---|---|
-| `firmware/` | **Data logger**. Records 6 s one-shot gestures on SPACEBAR, no ML on-chip. | During data collection. |
-| `firmware_infer/` | **On-device inference**. Runs the trained INT8 TFLite model on both cores, prints predictions on serial. | After training — the deployed product. |
+| Folder | Role | Serial baud | When to flash |
+|---|---|---|---|
+| `firmware/` | **Data logger.** Streams IMU data and records fixed 6 s samples on command from `python/collector.py`. No ML on-chip. | **921600** | While collecting training data |
+| `firmware_infer/` | **On-device inference.** Motion-triggered capture → INT8 model → OLED + audio. | **115200** | The finished device |
 
-The two firmwares use the **same wiring** and the **same board**. Flashing
-one replaces the other — the user flashes whichever role they need now.
+Both use the same board and the same MPU6050 wiring. Flashing one replaces
+the other.
 
-## 2. Prerequisites
+## 2. Toolchain
 
-- Setup done per [`SETUP.md`](SETUP.md): PlatformIO installed, drivers in place, Python venv.
-- Trained artifacts in `python/models/` (either the included smoke-test
-  model, or your own from [`TRAINING.md`](TRAINING.md)).
+| Item | Value |
+|---|---|
+| Build system | PlatformIO, **pioarduino** core in `~/.platformio/penv` |
+| Platform | `espressif32` (Arduino-ESP32 3.x) |
+| Board | `esp32-s3-devkitc-1`, 16 MB flash, OPI PSRAM, `default_16MB.csv` partitions |
+| TensorFlow Lite Micro | **The copy bundled with the Arduino-ESP32 framework** (`framework-arduinoespressif32-libs/esp32s3`: `espressif__esp-tflite-micro` + `esp-nn`, precompiled). It is **not** listed in `lib_deps` — a second copy causes header and link conflicts (see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)). |
+| Libraries (`lib_deps`) | `mamunul/BanglaText`, `adafruit/Adafruit SSD1306`, `adafruit/Adafruit GFX Library`, `dfrobot/DFRobotDFPlayerMini` |
 
-## 3. Flash the inference firmware
+Check you are using the pioarduino core:
+
+```bash
+which pio && pio --version
+```
+
+It should print `~/.platformio/penv/bin/pio`. If an old copy exists in
+`/usr/local/bin`, remove it (see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)).
+
+## 3. Before flashing
+
+1. Wire everything as in [`../hardware/WIRING.md`](../hardware/WIRING.md).
+2. Insert the prepared microSD card into the DFPlayer
+   ([`AUDIO_AND_DISPLAY.md`](AUDIO_AND_DISPLAY.md)).
+3. Plug the USB cable into the **UART** port.
+4. Lay the device **flat, face-up and still** — calibration runs at boot.
+
+## 4. Build and flash `firmware_infer`
 
 ```bash
 cd firmware_infer
-pio run -t upload
+pio run --target upload --target monitor
 ```
 
-First-time build pulls `espressif/esp-tflite-micro` + Arduino-ESP32 core —
-this takes 3–8 minutes depending on bandwidth. Subsequent builds are
-~10 seconds.
+The first build downloads the libraries and compiles everything
+(2–4 minutes). Later builds take ~25 seconds. A successful build ends with:
 
-> **Note:** the inference firmware already includes a working INT8 model
-> (`src/model_data.h`) built from the smoke-test dataset (ami + idle).
-> You can try it immediately without training anything yourself.
-
-Expected final lines of a successful build:
 ```
-RAM:   [====      ]  39.9% (used 130732 bytes from 327680 bytes)
-Flash: [=         ]   5.8% (used 381662 bytes from 6553600 bytes)
-...
-Hard resetting via RTS pin...
-========================= [SUCCESS] Took 25.92 seconds =========================
+RAM:   [=======   ]  73.9% (used 242124 bytes from 327680 bytes)
+Flash: [=         ]  13.3% (used 873811 bytes from 6553600 bytes)
+========================= [SUCCESS] =========================
 ```
 
-## 4. Watch it work
+To open only the serial monitor later:
 
 ```bash
-pio device monitor --baud 921600
+cd firmware_infer
+pio device monitor --baud 115200
 ```
 
-After reset you'll see:
+## 5. Resource usage
+
+| Resource | Value |
+|---|---|
+| RAM | 73.9 % (≈ 242 KB of 320 KB) |
+| Flash | 13.3 % |
+| INT8 model (`model_data.h`) | ≈ 149 KB |
+| Tensor arena | 168 KB reserved, 150.8 KB used (`150764/172032`) |
+| Inference time | ~39–42 ms per word |
+| Sampling | 100 Hz, uninterrupted (inference runs on the other core) |
+
+## 6. Boot sequence
 
 ```
-H,SANKET-infer,v1,100hz,on-device
+power on / RST
+   │
+   ├─ H,...        handshake line
+   ├─ C,START      MPU6050 calibration (keep still, ~2.5 s)
+   ├─ C,DONE,...   offsets (az ≈ +0.97 when flat and face-up)
+   ├─ OLED init    "SANKET boot..."  (non-fatal if missing)
+   ├─ DFPlayer     I,audio_ok,...    (non-fatal if missing, ~2.5 s)
+   ├─ TFLite       I,arena_used=...
+   ├─ I,ready,...  configuration summary
+   └─ STATE,IDLE   OLED shows লিখুন — ready to write
+```
+
+## 7. Serial protocol (`firmware_infer`, 115200 baud)
+
+### Example log
+
+```
+H,SANKET-infer,v4,motion-trigger+oled+audio,100hz
 C,START
-C,DONE,-0.37,-0.86,0.29,0.79,0.40,4.54
-I,ready
-P,idle,0.996
-P,idle,0.996
-P,idle,0.996
+C,DONE,0.0147,-0.1618,0.9702,-2.37,1.35,0.10
+I,audio_ok,files=7,volume=25
+I,arena_used=150764/172032
+I,ready,thresh=80.0,maxcap=3.50s,mincap=0.50s,settle=0.40s,cooldown=1.00s,classes=8
+I,class_order=idle,ami,haan,dhonnobad,pani,khabar,shahajjo,salam
+STATE,IDLE
+LIVE,energy=2.2
+LIVE,energy=1.9
+STATE,CAPTURING,energy=92.8
+CAP,n=50,elapsed=0.50s,energy=301.8,settled=0
+CAP,n=100,elapsed=1.00s,energy=164.2,settled=0
+CAP,n=150,elapsed=1.50s,energy=31.5,settled=21
+STATE,FINISH,n=172,elapsed=1.72s,reason=settled
+STATE,COOLDOWN
+INFER,top=pani,conf=0.918,infer_ms=42,probs=[idle:0.016,ami:0.008,haan:0.004,dhonnobad:0.023,pani:0.918,khabar:0.012,shahajjo:0.008,salam:0.008]
+DETECTED,pani,0.918
+AUDIO,play=4,pani
+AUDIO,done
+STATE,IDLE
 ```
 
-Air-write আমি (full connected signature-style sweep, ~3 seconds) and
-you'll see:
-
-```
-P,idle,0.823
-P,ami,0.942
-P,ami,0.991
-DETECTED,ami,0.991
-P,ami,0.996
-P,ami,0.996
-P,idle,0.654
-P,idle,0.996
-```
+### Line reference
 
 | Line | Meaning |
 |---|---|
-| `H,...` | Handshake on boot (name, version, sample rate) |
-| `C,START` / `C,DONE` | 2-second IMU calibration happening — keep wrist still |
-| `I,ready` | TFLM allocated tensors successfully, inference running |
-| `P,<class>,<conf>` | Prediction every ~300 ms. Confidence ∈ [0, 1] |
-| `DETECTED,<class>,<conf>` | Fires when confidence > 0.75 for 2 consecutive frames |
-| `E,<reason>` | Error (I²C read fail, invoke fail, etc.) |
+| `H,SANKET-infer,v4,...` | Handshake: firmware name and version |
+| `C,START` / `C,DONE,ax,ay,az,gx,gy,gz` | Boot calibration; offsets in g and °/s |
+| `I,audio_ok,files=N,volume=V` | DFPlayer answered; `files` = files it sees on the card (`-1` = card not ready yet) |
+| `I,arena_used=used/total` | TFLite tensor arena usage in bytes |
+| `I,ready,...` | Trigger threshold (°/s), max/min capture, settle time, cooldown, class count |
+| `I,class_order=...` | Class index order (index = DFPlayer track number) |
+| `STATE,IDLE` | Armed, waiting for wrist motion |
+| `LIVE,energy=E` | Once per second while idle: current gyro energy (°/s) |
+| `STATE,CAPTURING,energy=E` | Motion crossed the threshold; recording started |
+| `CAP,n=,elapsed=,energy=,settled=` | Every 0.5 s while recording; `settled` = samples below threshold |
+| `STATE,FINISH,n=,elapsed=,reason=` | Recording ended. `settled` = wrist still 0.4 s, `max_cap` = hit 3.5 s, `short_discard` = under 0.5 s (ignored) |
+| `STATE,COOLDOWN` | Waiting for the result and audio before re-arming |
+| `INFER,top=,conf=,infer_ms=,probs=[...]` | Model output for every capture |
+| `DETECTED,word,conf` | Top class is not idle and confidence ≥ 0.75 |
+| `AUDIO,play=N,word` | DFPlayer told to play `/mp3/000N.mp3` |
+| `AUDIO,done` | Playback finished (BUSY pin went HIGH) |
+| `W,oled_not_found_continuing_without_display` | No OLED — runs without display |
+| `W,dfplayer_not_found_continuing_without_audio` | No DFPlayer — runs display-only |
+| `E,mpu_init_fail`, `E,who_am_i=0x..` | MPU6050 not found — device halts (check wiring) |
+| `E,allocate_tensors_failed`, `E,tflite_init_fail` | Model could not be loaded — device halts |
+| `E,read_fail`, `E,invoke_failed`, `E,snap_mutex_busy` | Runtime errors (recoverable) |
 
-Exit the serial monitor with **Ctrl+C**.
-
-## 5. Switch back to data-logger firmware
+## 8. Switching back to the data logger
 
 ```bash
-# Close any open serial monitor (Ctrl+C) first
 cd firmware
-pio run -t upload
+pio run --target upload
 ```
 
-Now the device is a pure one-shot recorder again — launch the collector:
-```bash
-cd ../python
-source .venv/bin/activate
-python collector.py
-```
+Then run `python/collector.py`, which talks to the logger at **921600**
+baud. Flash `firmware_infer` again when you are done collecting.
 
-## 6. Deploying your own trained model
+## 9. Backup and test sketches (`firmware_infer/src/test/`)
 
-If you re-trained with new data or new words:
+`platformio.ini` contains `build_src_filter = +<*> -<test/>`, so files in
+`src/test/` are **never compiled** with the main firmware. They are kept
+as working references:
 
-```bash
-# After train.py completes, update the firmware:
-cp python/models/model_data.h  firmware_infer/src/model_data.h
-
-# If labels.json changed (added a new class), also update
-# firmware_infer/src/model_norm.h  →  MODEL_CLASSES + MODEL_CLASS_NAMES[]
-
-cd firmware_infer
-pio run -t upload
-```
-
-## 7. Troubleshooting
-
-| Problem | Fix |
+| File | Purpose |
 |---|---|
-| `A fatal error occurred: Could not open /dev/...` | Serial monitor is still open — close it (Ctrl+C), re-run upload |
-| `E,who_am_i=0x00` | MPU6050 wiring wrong or power missing — recheck [`../hardware/WIRING.md`](../hardware/WIRING.md) |
-| `E,tflite_init_fail` | Model + firmware ops mismatch after retraining — regenerate `model_data.h` and `model_norm.h` |
-| `E,allocate_tensors_failed` | Model too large for 90 KB arena — increase `kTensorArenaSize` in `firmware_infer/src/main.cpp` |
-| Serial port disappears (`ls /dev/cu.*` empty) | Unplug + replug USB cable |
-| Predictions stuck at idle 0.996 regardless of gesture | Calibration ran while your wrist was moving — unplug + replug, keep wrist still until `C,DONE` appears |
-| Predictions degrade after first good detection | Should NOT happen on dual-core firmware — if it does, confirm you're on `firmware_infer/` (not an older build) |
+| `main_dfplayer_phase1_test.cpp` | **Audio-only test.** Plays all 7 MP3s, reads BUSY, serial keys `1`–`7`, `a`, `+`, `-`, `s`, `?` (115200 baud). Use it to check DFPlayer wiring and the SD card. |
+| `main_oled_bangla270_working.cpp` | Motion-trigger + model + OLED with Bangla rotated 270°, before audio was added |
+| `main_oled_full.cpp` | First OLED + BanglaText integration |
+| `main_motion_trigger_working.cpp` | Motion-trigger + model, serial output only (no OLED, no audio) |
 
-## 8. What a successful on-device demo looks like
+To run one of them, swap it in temporarily:
 
+```bash
+cd firmware_infer
+cp src/main.cpp src/test/main_current_backup.cpp
+cp src/test/main_dfplayer_phase1_test.cpp src/main.cpp
+pio run --target upload --target monitor
+# restore afterwards:
+cp src/test/main_current_backup.cpp src/main.cpp
 ```
-┌────────────────────────────────────────┐
-│  Serial Monitor @ 921600               │
-│                                         │
-│  H,SANKET-infer,v1,100hz,on-device     │
-│  C,DONE,...                            │
-│  I,ready                               │
-│  P,idle,0.996    ← wrist still         │
-│  P,idle,0.996                          │
-│  P,idle,0.998                          │
-│                                         │
-│  (user air-writes "আমি")                │
-│                                         │
-│  P,ami,0.712                           │
-│  P,ami,0.942                           │
-│  DETECTED,ami,0.942     ← ← SUCCESS     │
-│  P,ami,0.996                           │
-│  P,ami,0.996                           │
-│  P,idle,0.654                          │
-│  P,idle,0.996    ← wrist still again   │
-└────────────────────────────────────────┘
-```
+
+## 10. If something goes wrong
+
+See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — every problem met while
+building SANKET is listed there with its cause and fix.

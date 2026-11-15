@@ -29,7 +29,7 @@ from PySide6.QtGui import QFont, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QComboBox, QLabel, QRadioButton, QButtonGroup, QGroupBox,
-    QMessageBox, QFrame, QSizePolicy
+    QMessageBox, QFrame, QSizePolicy, QSlider, QScrollArea
 )
 import pyqtgraph as pg
 
@@ -37,19 +37,32 @@ import pyqtgraph as pg
 # ---------- Config ----------
 BAUD              = 921600
 SAMPLE_RATE_HZ    = 100
-FIXED_RECORD_S    = 6.0                                    # must match firmware FIXED_RECORD_SAMPLES
-FIXED_RECORD_SMPL = int(FIXED_RECORD_S * SAMPLE_RATE_HZ)   # 600
+# FIXED 6 s uniform recording across all words — matches the original Ami
+# regime, so no padding or resampling is needed at training time. The slider
+# is locked (visible but disabled) so you can't accidentally change it.
+FIXED_DURATION_S  = 6.0
+MIN_DURATION_S    = FIXED_DURATION_S
+MAX_DURATION_S    = FIXED_DURATION_S
+DEFAULT_DURATION_S= FIXED_DURATION_S
 LIVE_WINDOW_S     = 6.0
 LIVE_SAMPLES      = int(LIVE_WINDOW_S * SAMPLE_RATE_HZ)
 PLOT_FPS          = 30
 DATA_DIR          = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Labels — map numeric id to (english_name, bangla_display, is_target)
-# Add more as the project grows; order here defines dropdown order.
+# Labels — one dict per class the model will learn.
+# All target words use the SAME 6.0 s window. Do the gesture at your natural
+# pace; hold wrist still for the remaining time. The model learns to ignore
+# the trailing stillness exactly like it did for the smoke-test Ami.
 LABELS = [
-    {"id": 0, "name": "ami",  "bangla": "আমি (air-written)", "target": True},
-    {"id": 1, "name": "idle", "bangla": "(random / rest)",  "target": False},
+    {"id": 0, "name": "ami",       "bangla": "আমি (I)",                "target": True,  "default_duration_s": 6.0,  "hint": "air-write আমি then hold still until 6 s"},
+    {"id": 1, "name": "haan",      "bangla": "হ্যাঁ (yes)",             "target": True,  "default_duration_s": 6.0,  "hint": "air-write হ্যাঁ then hold still until 6 s"},
+    {"id": 2, "name": "dhonnobad", "bangla": "ধন্যবাদ (thank you)",      "target": True,  "default_duration_s": 6.0,  "hint": "air-write ধন্যবাদ then hold still until 6 s"},
+    {"id": 3, "name": "pani",      "bangla": "পানি (water)",            "target": True,  "default_duration_s": 6.0,  "hint": "air-write পানি then hold still until 6 s"},
+    {"id": 4, "name": "khabar",    "bangla": "খাবার (food)",            "target": True,  "default_duration_s": 6.0,  "hint": "air-write খাবার then hold still until 6 s"},
+    {"id": 5, "name": "shahajjo", "bangla": "সাহায্য (help)",         "target": True,  "default_duration_s": 6.0,  "hint": "air-write সাহায্য then hold still until 6 s"},
+    {"id": 6, "name": "salam",    "bangla": "সালাম (Assalamu Alaikum)", "target": True,  "default_duration_s": 6.0,  "hint": "air-write সালাম then hold still until 6 s"},
+    {"id": 7, "name": "idle",      "bangla": "(random / rest)",       "target": False, "default_duration_s": 6.0,  "hint": "random hand movements for the full 6 s"},
 ]
 
 # Writing styles — each gesture label is collected across these styles so the
@@ -149,13 +162,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SANKET — Data Collector")
-        self.resize(1200, 820)
+        # Start modest so it fits a 13" MacBook; user can resize up freely.
+        self.resize(980, 680)
+        self.setMinimumSize(640, 480)
 
         # State
         self.reader: SerialReader | None = None
         self.current_label_idx = 0
         self.current_position  = 1
         self.current_style     = 1
+        self.current_duration_s = DEFAULT_DURATION_S
         self.counts = self._scan_counts()   # (name, pos, style) -> int
 
         # Buffers
@@ -169,6 +185,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._refresh_ui_counts()
+        # Prime hint + slider for the first label
+        self._on_label_change(0)
 
         # Plot update timer
         self._plot_timer = QTimer(self)
@@ -209,19 +227,40 @@ class MainWindow(QMainWindow):
         row1.addWidget(self.lbl_status)
         v.addLayout(row1)
 
-        # ----- Row 2: label + position + style -----
-        row2 = QGridLayout()
-        row2.setColumnStretch(1, 1)
-        row2.setColumnStretch(3, 1)
-        row2.setColumnStretch(5, 1)
-        row2.addWidget(QLabel("Label:"), 0, 0)
+        # ----- Session panel (scrollable, fixed max height) -----
+        # Houses Label + Position + Style + Counters so the long list of 11
+        # classes × 3 pos × 3 styles doesn't blow up the whole window.
+        session_box = QGroupBox("Session")
+        session_outer = QVBoxLayout(session_box)
+        session_outer.setContentsMargins(6, 10, 6, 6)
+        session_outer.setSpacing(4)
+
+        session_scroll = QScrollArea()
+        session_scroll.setWidgetResizable(True)
+        session_scroll.setFrameShape(QFrame.NoFrame)
+        session_scroll.setMinimumHeight(140)
+        session_scroll.setMaximumHeight(230)   # <-- panel never bloats more than this
+        session_outer.addWidget(session_scroll)
+
+        session_inner = QWidget()
+        session_scroll.setWidget(session_inner)
+        si = QVBoxLayout(session_inner)
+        si.setContentsMargins(2, 2, 2, 2)
+        si.setSpacing(6)
+
+        # Row A: Label + Position + Style
+        rowA = QGridLayout()
+        rowA.setColumnStretch(1, 1)
+        rowA.setColumnStretch(3, 1)
+        rowA.setColumnStretch(5, 1)
+        rowA.addWidget(QLabel("Label:"), 0, 0)
         self.cb_label = QComboBox()
         for i, L in enumerate(LABELS):
             self.cb_label.addItem(f"[{i+1}] {L['name']} — {L['bangla']}")
         self.cb_label.currentIndexChanged.connect(self._on_label_change)
-        row2.addWidget(self.cb_label, 0, 1)
+        rowA.addWidget(self.cb_label, 0, 1)
 
-        row2.addWidget(QLabel("Position:"), 0, 2)
+        rowA.addWidget(QLabel("Position:"), 0, 2)
         pos_box = QWidget(); pos_lay = QHBoxLayout(pos_box); pos_lay.setContentsMargins(0, 0, 0, 0)
         self.pos_group = QButtonGroup(self)
         for i in (1, 2, 3):
@@ -231,39 +270,61 @@ class MainWindow(QMainWindow):
             self.pos_group.addButton(rb, i)
             pos_lay.addWidget(rb)
         pos_lay.addStretch()
-        row2.addWidget(pos_box, 0, 3)
+        rowA.addWidget(pos_box, 0, 3)
 
-        row2.addWidget(QLabel("Style:"), 0, 4)
+        rowA.addWidget(QLabel("Style:"), 0, 4)
         sty_box = QWidget(); sty_lay = QHBoxLayout(sty_box); sty_lay.setContentsMargins(0, 0, 0, 0)
         self.style_group = QButtonGroup(self)
         for S in STYLES:
             rb = QRadioButton(f"{S['name']} ({S['desc']})")
             if S["id"] == 1: rb.setChecked(True)
-            rb.toggled.connect(lambda checked, si=S["id"]: self._on_style_change(si) if checked else None)
+            rb.toggled.connect(lambda checked, si_=S["id"]: self._on_style_change(si_) if checked else None)
             self.style_group.addButton(rb, S["id"])
             sty_lay.addWidget(rb)
         sty_lay.addStretch()
-        row2.addWidget(sty_box, 0, 5)
-        v.addLayout(row2)
+        rowA.addWidget(sty_box, 0, 5)
+        si.addLayout(rowA)
 
-        # ----- Row 3: counters -----
-        row3 = QHBoxLayout()
+        # Row B: counters, pre-formatted monospace grid, scrolls inside this box
         self.lbl_counts = QLabel("")
-        f = QFont();  f.setPointSize(11)
-        self.lbl_counts.setFont(f)
-        row3.addWidget(self.lbl_counts)
-        row3.addStretch()
-        v.addLayout(row3)
+        f_mono = QFont("Menlo"); f_mono.setPointSize(10)
+        self.lbl_counts.setFont(f_mono)
+        self.lbl_counts.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.lbl_counts.setStyleSheet("padding:2px 4px;")
+        si.addWidget(self.lbl_counts)
+        si.addStretch()
+
+        v.addWidget(session_box)
+
+        # ----- Row 2b: duration (LOCKED at 6 s for uniform training) -----
+        row2b = QHBoxLayout()
+        row2b.addWidget(QLabel("Duration:"))
+        self.lbl_duration = QLabel(f"🔒 {int(FIXED_DURATION_S)} s  (locked — uniform dataset)")
+        f_dur = QFont(); f_dur.setPointSize(11); f_dur.setBold(True)
+        self.lbl_duration.setFont(f_dur)
+        self.lbl_duration.setStyleSheet("color:#ffcc80;")
+        row2b.addWidget(self.lbl_duration)
+        row2b.addStretch(1)
+        self.lbl_hint = QLabel("")
+        self.lbl_hint.setStyleSheet("color:#8ab4f8; font-style:italic;")
+        self.lbl_hint.setWordWrap(True)
+        row2b.addWidget(self.lbl_hint, stretch=3)
+        v.addLayout(row2b)
+        # No slider — keep attribute for compatibility with handlers.
+        self.sl_duration = None
+
+        # (counters moved into the scrollable Session panel above)
 
         # ----- Instructions bar -----
-        tip = QLabel(f"Press  SPACE  → air-write আমি (ত + ি, আ, ম) in the air with your wrist "
-                     f"— device captures exactly {FIXED_RECORD_S:.1f} s and auto-stops. "
-                     f"Then  [S] Save  /  [R] Redo.  Change Position + Style between batches.")
+        tip = QLabel("Press  SPACE  →  do the gesture  →  hold wrist still until the 6 s window ends. "
+                     "Every word records for EXACTLY 6.0 s so every sample has the same shape "
+                     "(matches the Ami smoke-test regime that hit 100% accuracy).  "
+                     "[S] Save  /  [R] Redo.")
         tip.setStyleSheet("background:#2a2a2a; color:#eee; padding:6px; border-radius:4px;")
         v.addWidget(tip)
 
         # Big one-shot record button
-        self.btn_toggle = QPushButton(f"● RECORD  ({FIXED_RECORD_S:.1f} s)   [SPACE]")
+        self.btn_toggle = QPushButton(f"● RECORD  ({int(DEFAULT_DURATION_S)} s)   [SPACE]")
         self.btn_toggle.setMinimumHeight(52)
         f_big = QFont(); f_big.setPointSize(14); f_big.setBold(True)
         self.btn_toggle.setFont(f_big)
@@ -284,6 +345,7 @@ class MainWindow(QMainWindow):
             p.setMouseEnabled(x=False, y=True)
             p.setLabel("bottom", "time (s)")
             p.setXRange(-LIVE_WINDOW_S, 0)
+            p.setMinimumHeight(130)              # keeps plots usable even on small windows
         self.plot_accel.setYRange(-2.5, 2.5)
         self.plot_gyro.setYRange(-600, 600)
         v.addWidget(self.plot_accel, stretch=2)
@@ -305,10 +367,9 @@ class MainWindow(QMainWindow):
         self.preview_box = QGroupBox("Last recording")
         pv = QHBoxLayout(self.preview_box)
         self.lbl_preview = QLabel("No recording yet.")
-        self.lbl_preview.setMinimumWidth(500)
         self.lbl_preview.setStyleSheet("padding:6px; font-family:monospace;")
-        pv.addWidget(self.lbl_preview)
-        pv.addStretch()
+        self.lbl_preview.setWordWrap(True)
+        pv.addWidget(self.lbl_preview, stretch=1)
         self.btn_save = QPushButton("Save ✓  (S)")
         self.btn_save.clicked.connect(self._on_save)
         self.btn_save.setEnabled(False)
@@ -327,23 +388,53 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
 
     # ---------- Port handling ----------
+    def _port_score(self, p):
+        """Lower = better match for the ESP32-S3's USB-UART bridge.
+        Keeps Bluetooth and random /dev/cu.* devices at the bottom."""
+        name = p.device.lower()
+        desc = (p.description or "").lower()
+        # 1. Known USB-UART bridges used by ESP32 dev boards
+        if any(k in name for k in ("wchusbserial", "slab_usbtoart", "usbserial", "silabs")):
+            return 0
+        if any(k in desc for k in ("ch34", "ch9102", "cp210", "ftdi", "silicon labs",
+                                   "usb single serial", "usb-serial")):
+            return 0
+        # 2. ESP32-S3 native-USB CDC (less common in this project but valid)
+        if "usbmodem" in name:
+            return 1
+        # 3. Bluetooth — Mac shows a bunch of these and they're never our device
+        if any(k in name for k in ("bluetooth", "blth", "aweig", "incoming")):
+            return 9
+        # 4. tty.* (prefer cu.* over tty.*)
+        if "tty." in name:
+            return 7
+        return 5
+
     def _refresh_ports(self):
         self.cb_port.clear()
-        found = []
-        for p in serial.tools.list_ports.comports():
-            found.append(p.device)
-        # macOS: prefer cu.* over tty.*
-        found.sort(key=lambda x: (0 if "cu." in x else 1, x))
-        for d in found:
-            self.cb_port.addItem(d)
-        if not found:
+        ports = sorted(serial.tools.list_ports.comports(), key=self._port_score)
+        if not ports:
             self.cb_port.addItem("(no serial ports found)")
+            return
+        for p in ports:
+            desc = p.description or ""
+            if desc and desc.lower() != "n/a":
+                label = f"{p.device}   ({desc})"
+            else:
+                label = p.device
+            # Store the actual device path as userData; label can be prettier.
+            self.cb_port.addItem(label, userData=p.device)
 
     def _on_connect(self):
-        port = self.cb_port.currentText()
-        if not port or "(no serial" in port:
-            QMessageBox.warning(self, "No port", "No serial port selected.")
-            return
+        # Prefer the device path stored as userData (set by _refresh_ports);
+        # fall back to currentText for the "no ports found" placeholder.
+        port = self.cb_port.currentData()
+        if not port:
+            text = self.cb_port.currentText()
+            if not text or "(no serial" in text:
+                QMessageBox.warning(self, "No port", "No serial port selected.")
+                return
+            port = text
         self.reader = SerialReader(port, BAUD)
         self.reader.sample.connect(self._on_sample)
         self.reader.event.connect(self._on_event)
@@ -365,10 +456,12 @@ class MainWindow(QMainWindow):
         self.reader = None
 
     def _on_toggle_record(self):
-        """Fire a one-shot recording. Ignored by firmware while already recording."""
+        """Fire a one-shot recording with the current slider duration."""
         if not self.reader or self.recording:
             return
-        ok = self.reader.send(b"T\n")
+        samples = int(round(self.current_duration_s * SAMPLE_RATE_HZ))
+        cmd = f"T{samples}\n".encode("ascii")
+        ok = self.reader.send(cmd)
         if not ok:
             self._on_status("Trigger failed — serial not open")
 
@@ -419,7 +512,7 @@ class MainWindow(QMainWindow):
                 self.recording = False
                 # Back to green ready state
                 self.btn_toggle.setEnabled(True)
-                self.btn_toggle.setText(f"● RECORD  ({FIXED_RECORD_S:.1f} s)   [SPACE]")
+                self.btn_toggle.setText(f"● RECORD  ({int(self.current_duration_s)} s)   [SPACE]")
                 self.btn_toggle.setStyleSheet(
                     "QPushButton { background:#2e7d32; color:white; border-radius:6px; }"
                     "QPushButton:disabled { background:#444; color:#888; }"
@@ -436,9 +529,10 @@ class MainWindow(QMainWindow):
     def _on_recording_done(self, reported_n: int):
         data = np.asarray(self.rec_data, dtype=np.float32)
         n = data.shape[0]
-        if n < FIXED_RECORD_SMPL - 10:
+        expected = int(round(self.current_duration_s * SAMPLE_RATE_HZ))
+        if n < expected - 10:
             self.lbl_preview.setText(
-                f"Recording too short: {n}/{FIXED_RECORD_SMPL} samples "
+                f"Recording too short: {n}/{expected} samples "
                 f"(serial drops?). Redo.")
             self.pending = None
             self.btn_save.setEnabled(False)
@@ -536,32 +630,64 @@ class MainWindow(QMainWindow):
         return counts
 
     def _refresh_ui_counts(self):
-        parts = []
+        """Compact multi-line table: one line per word, aligned columns.
+        Looks like:
+            Word         Tot   P1 S1/S2/S3   P2 S1/S2/S3   P3 S1/S2/S3
+            ami           45      5/ 5/ 5       5/ 5/ 5       5/ 5/ 5
+            tumi           0      0/ 0/ 0       0/ 0/ 0       0/ 0/ 0
+            …
+        """
+        header = (f"{'Word':<11}{'Tot':>4}   "
+                  f"{'P1 S1/S2/S3':<14}{'P2 S1/S2/S3':<14}{'P3 S1/S2/S3':<14}")
+        lines = [header, "─" * (len(header) - 4)]
+        grand_total = 0
         for L in LABELS:
-            per_pos_tot = []
+            name = L["name"]
+            p_parts = []
+            tot = 0
             for pos in (1, 2, 3):
-                s_counts = [self.counts.get((L["name"], pos, s), 0) for s in (1, 2, 3)]
-                legacy   = self.counts.get((L["name"], pos, 0), 0)
-                pt = sum(s_counts) + legacy
-                per_pos_tot.append((pt, s_counts, legacy))
-            tot = sum(pt for pt, _, _ in per_pos_tot)
-            cells = []
-            for i, (pt, s_counts, legacy) in enumerate(per_pos_tot, start=1):
-                sub = f"S1:{s_counts[0]} S2:{s_counts[1]} S3:{s_counts[2]}"
+                s_counts = [self.counts.get((name, pos, s), 0) for s in (1, 2, 3)]
+                legacy   = self.counts.get((name, pos, 0), 0)
+                tot += sum(s_counts) + legacy
+                base = f"{s_counts[0]:>2}/{s_counts[1]:>2}/{s_counts[2]:>2}"
                 if legacy:
-                    sub += f" L:{legacy}"
-                cells.append(f"P{i}[{sub}]")
-            parts.append(f"{L['name']}: {tot}  " + " ".join(cells))
-        self.lbl_counts.setText("    ".join(parts))
+                    base += f"+{legacy}"
+                p_parts.append(f"{base:<14}")
+            grand_total += tot
+            lines.append(f"{name:<11}{tot:>4}   " + "".join(p_parts))
+        lines.append("─" * (len(header) - 4))
+        lines.append(f"{'TOTAL':<11}{grand_total:>4}")
+        self.lbl_counts.setText("\n".join(lines))
 
     def _on_label_change(self, idx: int):
         self.current_label_idx = idx
+        L = LABELS[idx]
+        # Duration is locked to 6s — just show the hint for this word
+        self.lbl_hint.setText(f"✏️  {L.get('hint', '')}")
 
     def _on_pos_change(self, pos: int):
         self.current_position = pos
 
     def _on_style_change(self, style: int):
         self.current_style = style
+
+    def _on_duration_change(self, value: int):
+        # Slider removed — duration is locked. Kept for signal compatibility.
+        self.current_duration_s = float(FIXED_DURATION_S)
+
+    # ---------- Clean shutdown ----------
+    def closeEvent(self, event):
+        """Stop and join the SerialReader thread BEFORE Qt destroys the
+        QObject tree. Otherwise QThread's destructor sees a still-running
+        thread and aborts with exit code 134."""
+        try:
+            if self.reader is not None:
+                self.reader.stop()
+                self.reader.wait(2000)
+                self.reader = None
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # ---------- Plot refresh ----------
     def _refresh_plots(self):
